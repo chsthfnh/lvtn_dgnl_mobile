@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'exam_detail_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'exam_detail_screen.dart'; // Import màn hình chi tiết
 
 class MockExamScreen extends StatefulWidget {
   const MockExamScreen({super.key});
@@ -21,6 +22,8 @@ class _MockExamScreenState extends State<MockExamScreen> {
 
   @override
   Widget build(BuildContext context) {
+    String? currentUserId = FirebaseAuth.instance.currentUser?.uid;
+
     return Scaffold(
       backgroundColor: _bgLight,
       appBar: AppBar(
@@ -32,7 +35,7 @@ class _MockExamScreenState extends State<MockExamScreen> {
           icon: Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: _primary.withValues(alpha: 0.05),
+              color: _primary.withOpacity(0.05),
               shape: BoxShape.circle,
             ),
             child: Icon(Icons.arrow_back, color: _primary, size: 20),
@@ -65,9 +68,7 @@ class _MockExamScreenState extends State<MockExamScreen> {
                 contentPadding: const EdgeInsets.symmetric(vertical: 0),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                    color: _outline.withValues(alpha: 0.5),
-                  ),
+                  borderSide: BorderSide(color: _outline.withOpacity(0.5)),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -98,9 +99,7 @@ class _MockExamScreenState extends State<MockExamScreen> {
                       color: isActive ? _primary : Colors.white,
                       borderRadius: BorderRadius.circular(20),
                       border: Border.all(
-                        color: isActive
-                            ? _primary
-                            : _outline.withValues(alpha: 0.5),
+                        color: isActive ? _primary : _outline.withOpacity(0.5),
                       ),
                     ),
                     child: Center(
@@ -122,115 +121,164 @@ class _MockExamScreenState extends State<MockExamScreen> {
           ),
           const SizedBox(height: 20),
 
-          // --- PHẦN HIỂN THỊ DỮ LIỆU ĐỘNG TỪ FIREBASE ---
+          // --- PHẦN HIỂN THỊ DỮ LIỆU ĐỘNG TỪ FIREBASE LỒNG NHAU ---
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              // Quét lấy danh sách đề thi đã được Public, sắp xếp mới nhất lên đầu
+              // 1. Quét lịch sử làm bài của User hiện tại
               stream: FirebaseFirestore.instance
-                  .collection('Exams')
-                  .where('isPublic', isEqualTo: true)
-                  .orderBy('createdAt', descending: true)
+                  .collection('ExamHistory')
+                  .where('userId', isEqualTo: currentUserId)
                   .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Text(
-                      'Đã xảy ra lỗi: ${snapshot.error}',
-                      style: const TextStyle(color: Colors.red),
-                    ),
-                  );
-                }
-
-                var allDocs = snapshot.data?.docs ?? [];
-
-                // Lọc theo thanh tìm kiếm
-                if (_searchQuery.isNotEmpty) {
-                  allDocs = allDocs.where((doc) {
-                    var data = doc.data() as Map<String, dynamic>;
-                    String title = (data['tenDeThi'] ?? '')
-                        .toString()
-                        .toLowerCase();
-                    return title.contains(_searchQuery);
-                  }).toList();
+              builder: (context, historySnapshot) {
+                // Lấy ra danh sách các maDeThi mà user này đã nộp bài
+                List<String> completedExamIds = [];
+                if (historySnapshot.hasData) {
+                  completedExamIds = historySnapshot.data!.docs
+                      .map(
+                        (doc) => (doc.data() as Map<String, dynamic>)['examId']
+                            .toString(),
+                      )
+                      .toList();
                 }
 
-                // TODO: Xử lý logic lọc "Chưa làm" / "Đã làm" ở đây khi có Collection lưu lịch sử làm bài của User.
-                // Tạm thời hiển thị tất cả nếu chưa nối History.
-
-                if (allDocs.isEmpty) {
-                  return Center(
-                    child: Text(
-                      'Không tìm thấy đề thi nào phù hợp.',
-                      style: TextStyle(color: Colors.grey.shade600),
-                    ),
-                  );
-                }
-
-                // Bóc tách 3 đề thi mới nhất cho mục Nổi bật
-                var featuredDocs = allDocs.take(3).toList();
-
-                return ListView(
-                  padding: const EdgeInsets.only(bottom: 40),
-                  children: [
-                    // --- MỤC: ĐỀ THI NỔI BẬT ---
-                    if (_searchQuery.isEmpty) ...[
-                      const Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 12,
-                        ),
+                return StreamBuilder<QuerySnapshot>(
+                  // 2. Quét danh sách toàn bộ Đề thi
+                  stream: FirebaseFirestore.instance
+                      .collection('Exams')
+                      .where('isPublic', isEqualTo: true)
+                      .orderBy('createdAt', descending: true)
+                      .snapshots(),
+                  builder: (context, examSnapshot) {
+                    if (examSnapshot.connectionState ==
+                        ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (examSnapshot.hasError) {
+                      return Center(
                         child: Text(
-                          'Đề thi nổi bật',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87,
+                          'Đã xảy ra lỗi: ${examSnapshot.error}',
+                          style: const TextStyle(color: Colors.red),
+                        ),
+                      );
+                    }
+
+                    var allDocs = examSnapshot.data?.docs ?? [];
+
+                    // --- BỘ LỌC 1: THEO TỪ KHÓA TÌM KIẾM ---
+                    if (_searchQuery.isNotEmpty) {
+                      allDocs = allDocs.where((doc) {
+                        var data = doc.data() as Map<String, dynamic>;
+                        String title = (data['tenDeThi'] ?? '')
+                            .toString()
+                            .toLowerCase();
+                        return title.contains(_searchQuery);
+                      }).toList();
+                    }
+
+                    // --- BỘ LỌC 2: THEO TRẠNG THÁI (Tất cả / Chưa làm / Đã làm) ---
+                    if (_selectedFilterIndex == 1) {
+                      // Chưa làm -> Loại bỏ các đề có ID nằm trong completedExamIds
+                      allDocs = allDocs
+                          .where((doc) => !completedExamIds.contains(doc.id))
+                          .toList();
+                    } else if (_selectedFilterIndex == 2) {
+                      // Đã làm -> Chỉ giữ lại các đề có ID nằm trong completedExamIds
+                      allDocs = allDocs
+                          .where((doc) => completedExamIds.contains(doc.id))
+                          .toList();
+                    }
+
+                    if (allDocs.isEmpty) {
+                      return Center(
+                        child: Text(
+                          'Không tìm thấy đề thi nào phù hợp.',
+                          style: TextStyle(color: Colors.grey.shade600),
+                        ),
+                      );
+                    }
+
+                    // Bóc tách 3 đề thi cho mục Nổi bật (Chỉ hiển thị khi đang ở tab "Tất cả" và không tìm kiếm)
+                    var featuredDocs = allDocs.take(3).toList();
+
+                    return ListView(
+                      padding: const EdgeInsets.only(bottom: 40),
+                      children: [
+                        // --- MỤC: ĐỀ THI NỔI BẬT ---
+                        if (_searchQuery.isEmpty &&
+                            _selectedFilterIndex == 0) ...[
+                          const Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 12,
+                            ),
+                            child: Text(
+                              'Đề thi nổi bật',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                              ),
+                            ),
+                          ),
+                          SizedBox(
+                            height: 160,
+                            child: ListView.builder(
+                              scrollDirection: Axis.horizontal,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
+                              itemCount: featuredDocs.length,
+                              itemBuilder: (context, index) {
+                                bool isCompleted = completedExamIds.contains(
+                                  featuredDocs[index].id,
+                                );
+                                return _buildFeaturedCard(
+                                  featuredDocs[index],
+                                  index,
+                                  isCompleted,
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
+
+                        // --- MỤC: TẤT CẢ ĐỀ THI ---
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 12,
+                          ),
+                          child: Text(
+                            _searchQuery.isNotEmpty
+                                ? 'Kết quả tìm kiếm'
+                                : (_selectedFilterIndex == 1
+                                      ? 'Đề thi chưa làm'
+                                      : (_selectedFilterIndex == 2
+                                            ? 'Đề thi đã làm'
+                                            : 'Tất cả đề thi')),
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87,
+                            ),
                           ),
                         ),
-                      ),
-                      SizedBox(
-                        height: 160,
-                        child: ListView.builder(
-                          scrollDirection: Axis.horizontal,
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          itemCount: featuredDocs.length,
-                          itemBuilder: (context, index) =>
-                              _buildFeaturedCard(featuredDocs[index], index),
+                        ListView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          itemCount: allDocs.length,
+                          itemBuilder: (context, index) {
+                            bool isCompleted = completedExamIds.contains(
+                              allDocs[index].id,
+                            );
+                            return _buildExamCard(allDocs[index], isCompleted);
+                          },
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-
-                    // --- MỤC: TẤT CẢ ĐỀ THI ---
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 12,
-                      ),
-                      child: Text(
-                        _searchQuery.isNotEmpty
-                            ? 'Kết quả tìm kiếm'
-                            : 'Tất cả đề thi',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                      ),
-                    ),
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics:
-                          const NeverScrollableScrollPhysics(), // Không tự cuộn vì đã nằm trong ListView mẹ
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      itemCount: allDocs.length,
-                      itemBuilder: (context, index) =>
-                          _buildExamCard(allDocs[index]),
-                    ),
-                  ],
+                      ],
+                    );
+                  },
                 );
               },
             ),
@@ -240,8 +288,8 @@ class _MockExamScreenState extends State<MockExamScreen> {
     );
   }
 
-  // --- CARD: ĐỀ THI NỔI BẬT (Vuốt ngang) ---
-  Widget _buildFeaturedCard(DocumentSnapshot doc, int index) {
+  // --- CARD: ĐỀ THI NỔI BẬT ---
+  Widget _buildFeaturedCard(DocumentSnapshot doc, int index, bool isCompleted) {
     Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
     String title = data['tenDeThi'] ?? 'Đề thi ĐGNL';
     String time = data['thoiGian']?.toString() ?? '150';
@@ -261,7 +309,6 @@ class _MockExamScreenState extends State<MockExamScreen> {
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          // Tạo màu nền gradient xanh dương sang trọng thay cho ảnh nền tĩnh
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -271,7 +318,7 @@ class _MockExamScreenState extends State<MockExamScreen> {
           ),
           boxShadow: [
             BoxShadow(
-              color: _primary.withValues(alpha: 0.2),
+              color: _primary.withOpacity(0.2),
               blurRadius: 8,
               offset: const Offset(0, 4),
             ),
@@ -280,20 +327,52 @@ class _MockExamScreenState extends State<MockExamScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: index == 0 ? Colors.deepOrange : Colors.green,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                index == 0 ? 'HOT' : 'MỚI',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: index == 0 ? Colors.deepOrange : Colors.blue,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    index == 0 ? 'HOT' : 'MỚI',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
-              ),
+                // THẺ TAG "ĐÃ LÀM" HOẶC "CHƯA LÀM"
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isCompleted
+                        ? Colors.green.withOpacity(0.2)
+                        : Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: isCompleted ? Colors.greenAccent : Colors.white54,
+                    ),
+                  ),
+                  child: Text(
+                    isCompleted ? 'Đã làm' : 'Chưa làm',
+                    style: TextStyle(
+                      color: isCompleted ? Colors.greenAccent : Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
             ),
             const Spacer(),
             Text(
@@ -324,8 +403,8 @@ class _MockExamScreenState extends State<MockExamScreen> {
     );
   }
 
-  // --- CARD: TẤT CẢ ĐỀ THI (Danh sách dọc) ---
-  Widget _buildExamCard(DocumentSnapshot doc) {
+  // --- CARD: TẤT CẢ ĐỀ THI ---
+  Widget _buildExamCard(DocumentSnapshot doc, bool isCompleted) {
     Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
     String title = data['tenDeThi'] ?? 'Chưa cập nhật tên';
     String time = data['thoiGian']?.toString() ?? '150';
@@ -347,10 +426,10 @@ class _MockExamScreenState extends State<MockExamScreen> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: _outline.withValues(alpha: 0.3)),
+          border: Border.all(color: _outline.withOpacity(0.3)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.02),
+              color: Colors.black.withOpacity(0.02),
               blurRadius: 10,
               offset: const Offset(0, 4),
             ),
@@ -391,20 +470,56 @@ class _MockExamScreenState extends State<MockExamScreen> {
               ],
             ),
             const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: const Color(0xFFE5EEFF),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: const Text(
-                'ĐGNL',
-                style: TextStyle(
-                  color: Color(0xFF1A365D),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE5EEFF),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Text(
+                    'ĐGNL',
+                    style: TextStyle(
+                      color: Color(0xFF1A365D),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(width: 8),
+                // THẺ TAG "ĐÃ LÀM" HOẶC "CHƯA LÀM"
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isCompleted
+                        ? Colors.green.shade50
+                        : Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: isCompleted
+                          ? Colors.green.shade200
+                          : Colors.orange.shade200,
+                    ),
+                  ),
+                  child: Text(
+                    isCompleted ? 'Đã làm' : 'Chưa làm',
+                    style: TextStyle(
+                      color: isCompleted
+                          ? Colors.green.shade700
+                          : Colors.orange.shade800,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 16),
             Row(

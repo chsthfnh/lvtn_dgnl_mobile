@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'practice_result_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 const _primaryColor = Color(0xFF002045);
 const _onPrimaryColor = Colors.white;
@@ -114,19 +115,39 @@ class _PracticeScreenState extends State<PracticeScreen> {
     _processResults();
   }
 
-  void _processResults() {
+  void _processResults() async {
     int correctCount = 0;
+    int answeredCount = 0; // THÊM BIẾN ĐẾM SỐ CÂU ĐÃ CHỌN ĐÁP ÁN
+
     for (int i = 0; i < widget.questions.length; i++) {
       var data = widget.questions[i].data() as Map<String, dynamic>;
       String correctAnsLetter = data['correctAnswer'] ?? 'A';
       int? userAnsIndex = _userAnswers[i];
+
       if (userAnsIndex != null) {
+        answeredCount++; // Câu nào có chọn đáp án thì mới tính
         String userAnsLetter = String.fromCharCode(65 + userAnsIndex);
         if (userAnsLetter == correctAnsLetter) correctCount++;
       }
     }
 
     int timeSpentSeconds = (widget.timeInMinutes * 60) - _secondsRemaining;
+
+    String? currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId != null) {
+      await FirebaseFirestore.instance.collection('ExamHistory').add({
+        'userId': currentUserId,
+        'examId': 'practice_mode',
+        'examName': 'Luyện tập: ${widget.subjectName}',
+        'timeSpentSeconds': timeSpentSeconds,
+        'correctAnswers': correctCount,
+        'answeredCount': answeredCount, // THÊM: Chỉ lưu số câu thực tế đã làm
+        'totalQuestions': widget.questions.length,
+        'submittedAt': FieldValue.serverTimestamp(),
+      });
+    }
+
+    if (!mounted) return;
 
     Navigator.pushReplacement(
       context,

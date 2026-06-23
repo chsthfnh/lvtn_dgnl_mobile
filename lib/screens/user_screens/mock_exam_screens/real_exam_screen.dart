@@ -2,8 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import '../practice_screens/practice_result_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class RealExamScreen extends StatefulWidget {
   final DocumentSnapshot examDoc;
@@ -30,7 +30,6 @@ class _RealExamScreenState extends State<RealExamScreen> {
   final Map<int, int> _userAnswers = {};
   late Timer _timer;
   int _secondsRemaining = 0;
-  final Map<String, Future<String>> _imageFutures = {};
 
   @override
   void initState() {
@@ -158,13 +157,17 @@ class _RealExamScreenState extends State<RealExamScreen> {
     _processResults();
   }
 
-  void _processResults() {
+  void _processResults() async {
     int correctCount = 0;
+    int answeredCount = 0; // THÊM BIẾN ĐẾM SỐ CÂU ĐÃ CHỌN ĐÁP ÁN
+
     for (int i = 0; i < _questions.length; i++) {
       var data = _questions[i].data() as Map<String, dynamic>;
       String correctAnsLetter = data['correctAnswer'] ?? 'A';
       int? userAnsIndex = _userAnswers[i];
+
       if (userAnsIndex != null) {
+        answeredCount++; // Câu nào có chọn đáp án thì mới tăng lên
         String userAnsLetter = String.fromCharCode(65 + userAnsIndex);
         if (userAnsLetter == correctAnsLetter) correctCount++;
       }
@@ -176,6 +179,24 @@ class _RealExamScreenState extends State<RealExamScreen> {
     String examName =
         (widget.examDoc.data() as Map<String, dynamic>)['tenDeThi'] ??
         'Đề thi ĐGNL';
+    String? currentUserId = FirebaseAuth.instance.currentUser?.uid;
+
+    if (currentUserId != null) {
+      await FirebaseFirestore.instance.collection('ExamHistory').add({
+        'userId': currentUserId,
+        'examId': widget.examDoc.id,
+        'examName': examName,
+        'timeSpentSeconds': timeSpentSeconds,
+        'correctAnswers': correctCount,
+        'answeredCount':
+            answeredCount, // THÊM: Chỉ lưu số câu thực tế đã chọn đáp án
+        'totalQuestions':
+            _questions.length, // Giữ nguyên tổng câu đề thi để tính điểm /1200
+        'submittedAt': FieldValue.serverTimestamp(),
+      });
+    }
+
+    if (!mounted) return;
 
     Navigator.pushReplacement(
       context,
