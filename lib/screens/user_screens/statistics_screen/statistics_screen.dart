@@ -107,7 +107,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
             List<Map<String, dynamic>> tempActivities = [];
 
             for (var doc in historySnap.docs) {
-              var data = doc.data() as Map<String, dynamic>;
+              var data = doc.data();
               int totalQInExam =
                   data['totalQuestions'] ??
                   0; // Dùng để tính toán chính xác điểm thi thử /1200

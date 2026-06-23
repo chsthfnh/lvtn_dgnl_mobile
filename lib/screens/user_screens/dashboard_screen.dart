@@ -82,7 +82,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             int genC = 0, genQ = 0; // Đề thi thử chung
 
             for (var doc in history.docs) {
-              var data = doc.data() as Map<String, dynamic>;
+              var data = doc.data();
               int c = data['correctAnswers'] ?? 0;
               int q = data['answeredCount'] ?? data['totalQuestions'] ?? 0;
               String name = (data['examName'] ?? '').toString().toLowerCase();
