@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "39592049411",
+    "project_id": "dgnl-lachithanh-dh52201455",
+    "storage_bucket": "dgnl-lachithanh-dh52201455.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:39592049411:android:9a13d64c3962f854b40736",
+        "android_client_info": {
+          "package_name": "vn.edu.stu.dgnl_lachithanh_dh52201455"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "39592049411-kce86q0gr5ei5fsrabfs46vpeoc8lhvb.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "vn.edu.stu.dgnl_lachithanh_dh52201455",
+            "certificate_hash": "3084e8b81f6c7ae152ff9f448068ae4c8264ec1e"
+          }
+        },
+        {
+          "client_id": "39592049411-fn79he9ichcms0qsfqrl6q1p2aij84tv.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA5B2aHFdfIganFyyUk0CjBCp2X_U6_wq8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "39592049411-fn79he9ichcms0qsfqrl6q1p2aij84tv.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "39592049411-pk948t5i6h284ov8094o97t32tmvpoot.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "vn.edu.stu.dgnlLachithanhDh52201455"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
