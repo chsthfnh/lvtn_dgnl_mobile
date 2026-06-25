@@ -77,10 +77,11 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // --- HÀM 2: ĐĂNG NHẬP BẰNG GOOGLE (CHẶN NẾU CHƯA ĐĂNG KÝ) ---
+  // --- HÀM 2: ĐĂNG NHẬP BẰNG GOOGLE (LUỒNG CHUẨN: CHECK TRƯỚC KHI AUTH) ---
   Future<void> _signInWithGoogle() async {
     setState(() => _isLoading = true);
     try {
+      // 1. KHÔI PHỤC CÚ PHÁP GỐC CỦA BẠN ĐỂ GỌI GOOGLE
       final googleSignIn = GoogleSignIn.instance;
       await googleSignIn.initialize();
 
@@ -90,60 +91,56 @@ class _LoginScreenState extends State<LoginScreen> {
         return; // Người dùng bấm hủy
       }
 
+      // 2. Lấy email vừa chọn đi kiểm tra trong collection 'Users' của Firestore
+      var userQuery = await FirebaseFirestore.instance
+          .collection('Users')
+          .where('email', isEqualTo: googleUser.email)
+          .limit(1)
+          .get();
+
+      if (userQuery.docs.isEmpty) {
+        // KHÔNG HỢP LỆ: Email chưa được đăng ký -> Ép xuất khỏi Google và báo lỗi
+        await googleSignIn.signOut();
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text(
+                'Tài khoản này chưa đăng ký. Vui lòng tạo tài khoản!',
+                style: TextStyle(fontSize: 15),
+              ),
+              backgroundColor: Colors.red[800],
+              duration: const Duration(seconds: 5),
+              action: SnackBarAction(
+                label: 'ĐĂNG KÝ NGAY',
+                textColor: Colors.yellowAccent,
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const RegisterScreen(),
+                    ),
+                  );
+                },
+              ),
+            ),
+          );
+        }
+        return; // Cắt luồng, tuyệt đối không tạo tài khoản Firebase Auth
+      }
+
+      // 3. HỢP LỆ: Tài khoản đã có trong Database -> Tiến hành cấp phép Firebase Auth
       final GoogleSignInAuthentication googleAuth =
           await googleUser.authentication;
       final AuthCredential credential = GoogleAuthProvider.credential(
-        idToken: googleAuth.idToken,
+        idToken: googleAuth.idToken, // Chỉ dùng idToken như code gốc của bạn
       );
 
-      // Đăng nhập vào Firebase
-      UserCredential userCredential = await _auth.signInWithCredential(
-        credential,
-      );
-      User? user = userCredential.user;
+      // Đăng nhập chính thức vào Firebase
+      await _auth.signInWithCredential(credential);
 
-      if (user != null) {
-        // KIỂM TRA: Tìm tài khoản trong Collection Users trên Firestore
-        DocumentSnapshot userDoc = await FirebaseFirestore.instance
-            .collection('Users')
-            .doc(user.uid)
-            .get();
-
-        if (userDoc.exists) {
-          // HỢP LỆ: Tài khoản đã đăng ký thành công trước đó
-          if (mounted) await _checkRoleAndNavigate();
-        } else {
-          // KHÔNG HỢP LỆ: Chưa có dữ liệu tài khoản -> Ép buộc đăng xuất
-          await _auth.signOut();
-          await googleSignIn
-              .signOut(); // Đăng xuất luôn khỏi Google Sign-In để lần sau chọn lại
-
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text(
-                  'Tài khoản này chưa đăng ký. Vui lòng tạo tài khoản!',
-                  style: TextStyle(fontSize: 15),
-                ),
-                backgroundColor: Colors.red[800],
-                duration: const Duration(seconds: 5),
-                action: SnackBarAction(
-                  label: 'ĐĂNG KÝ NGAY',
-                  textColor: Colors.yellowAccent,
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const RegisterScreen(),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            );
-          }
-        }
-      }
+      // Chuyển hướng vào app
+      if (mounted) await _checkRoleAndNavigate();
     } catch (e) {
       if (mounted) {
         if (!e.toString().contains('sign_in_canceled') &&
@@ -362,7 +359,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         side: BorderSide(color: Colors.grey[300]!),
                       ),
                       onPressed:
-                          _signInWithGoogle, // Gắn logic Đăng nhập Google
+                          _signInWithGoogle, // Gắn logic Đăng nhập Google đã sửa
                       icon: Image.asset('assets/gg.png', height: 24),
                       label: const Text(
                         'Đăng nhập bằng Google',

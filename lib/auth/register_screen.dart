@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-import 'login_screen.dart';
-
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
 
@@ -51,7 +49,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     setState(() => _isLoading = true);
     try {
-      // 1. Tạo tài khoản trên Firebase
+      // 1. Tạo tài khoản trên Firebase Auth
       UserCredential userCredential = await _auth
           .createUserWithEmailAndPassword(
             email: _emailController.text.trim(),
@@ -61,35 +59,70 @@ class _RegisterScreenState extends State<RegisterScreen> {
       User? user = userCredential.user;
 
       if (user != null) {
-        // 2. Lưu hồ sơ lên Firestore
+        // 2. Lưu hồ sơ lên Firestore (Thêm targetScore mặc định để không bị lỗi màn Thống kê)
         await FirebaseFirestore.instance.collection('Users').doc(user.uid).set({
           'uid': user.uid,
           'email': user.email,
           'fullName': _nameController.text.trim(),
           'role': 'student',
+          'targetScore': 900, // Đã bổ sung mục tiêu điểm mặc định
           'createdAt': FieldValue.serverTimestamp(),
         });
 
         // 3. Gửi Link Xác Thực vào Email
         await user.sendEmailVerification();
 
-        // 4. Đăng xuất ngay lập tức để ép họ phải xác thực trước khi dùng
+        // 4. Đăng xuất ngay lập tức để ép xác thực
         await _auth.signOut();
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Đăng ký thành công! Vui lòng kiểm tra hộp thư Email để bấm link xác thực tài khoản.',
+          // HIỂN THỊ DIALOG BẮT BUỘC ĐỌC THAY VÌ SNACKBAR TỰ BIẾN MẤT
+          showDialog(
+            context: context,
+            barrierDismissible: false, // Bắt buộc người dùng phải bấm nút
+            builder: (ctx) => AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
               ),
-              backgroundColor: Colors.green,
-              duration: Duration(seconds: 5),
+              title: const Row(
+                children: [
+                  Icon(
+                    Icons.mark_email_unread_outlined,
+                    color: Colors.green,
+                    size: 28,
+                  ),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Đăng ký thành công',
+                      style: TextStyle(
+                        color: Colors.green,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              content: const Text(
+                'Hệ thống đã gửi một liên kết xác nhận vào email của bạn.\n\nVui lòng kiểm tra hộp thư (hoặc thư rác) và nhấn vào liên kết để kích hoạt tài khoản trước khi đăng nhập.',
+                style: TextStyle(fontSize: 15, height: 1.4),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(ctx); // Đóng Dialog
+                    Navigator.pop(
+                      context,
+                    ); // Lùi về đúng màn hình Đăng nhập (Clean Stack)
+                  },
+                  child: const Text(
+                    'Đã hiểu và Đăng nhập',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
             ),
-          );
-          // Trở về màn hình đăng nhập
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => const LoginScreen()),
           );
         }
       }
