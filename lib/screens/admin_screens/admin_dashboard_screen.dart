@@ -22,14 +22,154 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final Color _primaryDark = const Color(0xFF28355A); // Xanh đen chủ đạo
   final Color _bgLight = const Color(0xFFF8F9FA); // Màu nền xám nhạt
 
-  void _showNotificationDialog() {
-    TextEditingController titleCtrl = TextEditingController();
-    TextEditingController contentCtrl = TextEditingController();
+  // 1. Popup quản lý toàn bộ thông báo của Admin
+  void _showAdminNotificationPanel() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        height: MediaQuery.of(context).size.height * 0.85,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Quản lý thông báo',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF002045),
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: () =>
+                        _showNotificationFormDialog(), // Nút tạo mới
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Tạo mới'),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('Notifications')
+                    .orderBy('createdAt', descending: true)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting)
+                    return const Center(child: CircularProgressIndicator());
+                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                    return const Center(
+                      child: Text(
+                        'Chưa có thông báo nào được gửi đi.',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    );
+                  }
+
+                  return ListView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: snapshot.data!.docs.length,
+                    itemBuilder: (context, index) {
+                      var doc = snapshot.data!.docs[index];
+                      var data = doc.data() as Map<String, dynamic>;
+
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        child: ListTile(
+                          title: Text(
+                            data['title'] ?? '',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Text(
+                            data['content'] ?? '',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.edit_outlined,
+                                  color: Colors.blue,
+                                ),
+                                onPressed: () => _showNotificationFormDialog(
+                                  doc: doc,
+                                ), // Gọi form để Sửa
+                              ),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.delete_outline,
+                                  color: Colors.red,
+                                ),
+                                onPressed: () async {
+                                  bool confirm =
+                                      await showDialog(
+                                        context: context,
+                                        builder: (ctx) => AlertDialog(
+                                          title: const Text('Xóa thông báo?'),
+                                          content: const Text(
+                                            'Thông báo này sẽ bị xóa khỏi máy tất cả học viên.',
+                                          ),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () =>
+                                                  Navigator.pop(ctx, false),
+                                              child: const Text('Hủy'),
+                                            ),
+                                            ElevatedButton(
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: Colors.red,
+                                              ),
+                                              onPressed: () =>
+                                                  Navigator.pop(ctx, true),
+                                              child: const Text('Xóa'),
+                                            ),
+                                          ],
+                                        ),
+                                      ) ??
+                                      false;
+                                  if (confirm) await doc.reference.delete();
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 2. Form Tạo / Sửa thông báo dùng chung
+  void _showNotificationFormDialog({DocumentSnapshot? doc}) {
+    TextEditingController titleCtrl = TextEditingController(
+      text: doc != null ? doc['title'] : '',
+    );
+    TextEditingController contentCtrl = TextEditingController(
+      text: doc != null ? doc['content'] : '',
+    );
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Gửi thông báo'),
+        title: Text(doc == null ? 'Soạn thông báo mới' : 'Sửa thông báo'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -37,9 +177,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               controller: titleCtrl,
               decoration: const InputDecoration(labelText: 'Tiêu đề'),
             ),
+            const SizedBox(height: 12),
             TextField(
               controller: contentCtrl,
-              decoration: const InputDecoration(labelText: 'Nội dung'),
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Nội dung',
+                border: OutlineInputBorder(),
+              ),
             ),
           ],
         ),
@@ -49,16 +194,35 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             child: const Text('Hủy'),
           ),
           ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF002045),
+              foregroundColor: Colors.white,
+            ),
             onPressed: () async {
-              await FirebaseFirestore.instance.collection('Notifications').add({
-                'title': titleCtrl.text,
-                'content': contentCtrl.text,
-                'createdAt': FieldValue.serverTimestamp(),
-                'type': 'admin_news', // Phân loại tin tức
-              });
+              if (titleCtrl.text.isEmpty || contentCtrl.text.isEmpty) return;
+
+              if (doc == null) {
+                // TẠO MỚI
+                await FirebaseFirestore.instance
+                    .collection('Notifications')
+                    .add({
+                      'title': titleCtrl.text,
+                      'content': contentCtrl.text,
+                      'createdAt': FieldValue.serverTimestamp(),
+                      'type': 'admin_news',
+                      'readBy': [],
+                      'deletedBy': [], // Quan trọng để User có thể xóa cá nhân
+                    });
+              } else {
+                // CẬP NHẬT
+                await doc.reference.update({
+                  'title': titleCtrl.text,
+                  'content': contentCtrl.text,
+                });
+              }
               if (mounted) Navigator.pop(ctx);
             },
-            child: const Text('Gửi'),
+            child: Text(doc == null ? 'Gửi đi' : 'Lưu lại'),
           ),
         ],
       ),
@@ -126,19 +290,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   Icons.notifications_none,
                   color: Colors.black87,
                 ),
-                onPressed: _showNotificationDialog,
+                onPressed: _showAdminNotificationPanel,
               ),
               Positioned(
                 top: 12,
                 right: 12,
-                child: Container(
-                  width: 8,
-                  height: 8,
-                  decoration: const BoxDecoration(
-                    color: Colors.red,
-                    shape: BoxShape.circle,
-                  ),
-                ),
+                child: Container(width: 8, height: 8),
               ),
             ],
           ),
@@ -362,20 +519,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           Timestamp? lastActiveTs = data['lastActive'];
           String action = data['currentAction'] ?? 'offline';
 
-          bool isOffline = true;
+          // THÊM ĐIỀU KIỆN NÀY:
+          // Chỉ đưa vào danh sách giám sát nếu học viên ĐÃ TỪNG HOẠT ĐỘNG
+          // (Tức là đã xác thực email và đăng nhập thành công ít nhất 1 lần)
           if (lastActiveTs != null) {
-            // Nếu không có tương tác nào trong 15 phút -> Chuyển thành Ngoại tuyến
-            if (now.difference(lastActiveTs.toDate()).inMinutes < 15) {
+            bool isOffline = true;
+            if (now.difference(lastActiveTs.toDate()).inMinutes < 5) {
               isOffline = false;
             }
-          }
 
-          allUsers.add({
-            'name': data['fullName'] ?? 'Học viên ẩn danh',
-            'email': data['email'] ?? '',
-            'lastActive': lastActiveTs?.toDate(),
-            'status': isOffline ? 'offline' : action,
-          });
+            allUsers.add({
+              'name': data['fullName'] ?? 'Học viên ẩn danh',
+              'email': data['email'] ?? '',
+              'lastActive': lastActiveTs.toDate(),
+              'status': isOffline ? 'offline' : action,
+            });
+          }
         }
 
         // Sắp xếp: Ai vừa hoạt động gần nhất đưa lên đầu
@@ -585,19 +744,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               Timestamp? lastActiveTs = data['lastActive'];
               String action = data['currentAction'] ?? 'offline';
 
-              bool isOffline = true;
+              // THÊM ĐIỀU KIỆN NÀY:
+              // Chỉ đưa vào danh sách giám sát nếu học viên ĐÃ TỪNG HOẠT ĐỘNG
+              // (Tức là đã xác thực email và đăng nhập thành công ít nhất 1 lần)
               if (lastActiveTs != null) {
-                if (now.difference(lastActiveTs.toDate()).inMinutes < 15) {
+                bool isOffline = true;
+                if (now.difference(lastActiveTs.toDate()).inMinutes < 5) {
                   isOffline = false;
                 }
-              }
 
-              allUsers.add({
-                'name': data['fullName'] ?? 'Học viên ẩn danh',
-                'email': data['email'] ?? '',
-                'lastActive': lastActiveTs?.toDate(),
-                'status': isOffline ? 'offline' : action,
-              });
+                allUsers.add({
+                  'name': data['fullName'] ?? 'Học viên ẩn danh',
+                  'email': data['email'] ?? '',
+                  'lastActive': lastActiveTs.toDate(),
+                  'status': isOffline ? 'offline' : action,
+                });
+              }
             }
 
             int idle = allUsers.where((u) => u['status'] == 'idle').length;

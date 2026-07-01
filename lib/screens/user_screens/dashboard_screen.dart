@@ -78,83 +78,110 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     .orderBy('createdAt', descending: true)
                     .snapshots(),
                 builder: (context, snapshot) {
-                  if (!snapshot.hasData)
+                  if (snapshot.connectionState == ConnectionState.waiting)
                     return const Center(child: CircularProgressIndicator());
+                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                    return const Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.notifications_off_outlined,
+                            size: 48,
+                            color: Colors.grey,
+                          ),
+                          SizedBox(height: 16),
+                          Text(
+                            'Hiện tại chưa có thông báo nào.',
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
 
                   return ListView.builder(
                     itemCount: snapshot.data!.docs.length,
+                    // BÊN TRONG ListView.builder CỦA HÀM _showNotificationPopup():
                     itemBuilder: (context, index) {
                       var doc = snapshot.data!.docs[index];
                       var data = doc.data() as Map<String, dynamic>;
                       String uid = FirebaseAuth.instance.currentUser!.uid;
 
-                      return FutureBuilder<DocumentSnapshot>(
-                        future: doc.reference
-                            .collection('ReadBy')
-                            .doc(uid)
-                            .get(),
-                        builder: (ctx, snap) {
-                          bool isRead = snap.hasData && snap.data!.exists;
+                      // Nếu User đã vuốt xóa -> Ẩn thẻ này đi bằng SizedBox.shrink()
+                      List deletedBy = data['deletedBy'] ?? [];
+                      if (deletedBy.contains(uid))
+                        return const SizedBox.shrink();
 
-                          return Card(
-                            elevation: isRead ? 0 : 2,
-                            color: isRead
-                                ? Colors.white
-                                : Colors.blue.shade50, // Highlight xanh nhẹ
-                            margin: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 4,
-                            ),
-                            child: ListTile(
-                              leading: Icon(
-                                data['type'] == 'new_exam'
-                                    ? Icons.assignment
-                                    : Icons.notifications,
-                                color: isRead ? Colors.grey : Colors.blue,
-                              ),
-                              title: Text(
-                                data['title'],
-                                style: TextStyle(
-                                  fontWeight: isRead
-                                      ? FontWeight.normal
-                                      : FontWeight.bold,
-                                ),
-                              ),
-                              subtitle: Text(
-                                data['content'],
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              onTap: () async {
-                                // 1. Đánh dấu đã đọc vào Firestore
-                                await doc.reference
-                                    .collection('ReadBy')
-                                    .doc(uid)
-                                    .set({
-                                      'readAt': FieldValue.serverTimestamp(),
-                                    });
-                                _markAsReadAndShowDetail(doc, data);
+                      List readBy = data['readBy'] ?? [];
+                      bool isRead = readBy.contains(uid);
 
-                                // 2. Hiển thị nội dung chi tiết
-                                if (!mounted) return;
-                                showDialog(
-                                  context: context,
-                                  builder: (dialogCtx) => AlertDialog(
-                                    title: Text(data['title']),
-                                    content: Text(data['content']),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () =>
-                                            Navigator.pop(dialogCtx),
-                                        child: const Text('Đóng'),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            ),
-                          );
+                      // DÙNG DISMISSIBLE ĐỂ VUỐT XÓA
+                      return Dismissible(
+                        key: Key(doc.id),
+                        direction: DismissDirection
+                            .endToStart, // Chỉ cho vuốt từ phải qua trái
+                        background: Container(
+                          margin: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade400,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.only(right: 20),
+                          child: const Icon(
+                            Icons.delete_sweep,
+                            color: Colors.white,
+                            size: 28,
+                          ),
+                        ),
+                        onDismissed: (direction) {
+                          // Âm thầm đưa UID vào danh sách deletedBy trên Firebase
+                          doc.reference.update({
+                            'deletedBy': FieldValue.arrayUnion([uid]),
+                          });
                         },
+                        child: Card(
+                          elevation: isRead ? 0 : 2,
+                          color: isRead ? Colors.white : Colors.blue.shade50,
+                          margin: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 4,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: ListTile(
+                            leading: Icon(
+                              data['type'] == 'new_exam'
+                                  ? Icons.assignment
+                                  : Icons.notifications,
+                              color: isRead ? Colors.grey : Colors.blue,
+                            ),
+                            title: Text(
+                              data['title'] ?? '',
+                              style: TextStyle(
+                                fontWeight: isRead
+                                    ? FontWeight.normal
+                                    : FontWeight.bold,
+                              ),
+                            ),
+                            subtitle: Text(
+                              data['content'] ?? '',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onTap: () {
+                              doc.reference.update({
+                                'readBy': FieldValue.arrayUnion([uid]),
+                              });
+                              _markAsReadAndShowDetail(data);
+                            },
+                          ),
+                        ),
                       );
                     },
                   );
@@ -167,24 +194,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  void _markAsReadAndShowDetail(
-    DocumentSnapshot doc,
-    Map<String, dynamic> data,
-  ) async {
-    String uid = FirebaseAuth.instance.currentUser!.uid;
-
-    // 1. Đánh dấu đã đọc
-    await doc.reference.collection('ReadBy').doc(uid).set({
-      'readAt': FieldValue.serverTimestamp(),
-    });
-
-    // 2. Hiện Popup nội dung chi tiết
+  void _markAsReadAndShowDetail(Map<String, dynamic> data) {
     if (!mounted) return;
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(data['title']),
-        content: Text(data['content']),
+        title: Text(data['title'] ?? ''),
+        content: Text(data['content'] ?? ''),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -343,18 +359,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ],
               ),
+              // THAY THẾ ĐOẠN ĐẾM CHẤM ĐỎ CŨ BẰNG ĐOẠN NÀY:
               actions: [
                 StreamBuilder<QuerySnapshot>(
                   stream: FirebaseFirestore.instance
                       .collection('Notifications')
                       .snapshots(),
                   builder: (context, snapshot) {
-                    // Đếm số thông báo mà User chưa xem (chưa có UID trong sub-collection ReadBy)
-                    int unreadCount = 0;
+                    bool hasUnread = false;
+
                     if (snapshot.hasData) {
-                      // Lưu ý: Để tối ưu, ở production bạn nên dùng Cloud Function để đếm.
-                      // Đây là cách đơn giản để test:
-                      unreadCount = snapshot.data!.docs.length;
+                      String uid = FirebaseAuth.instance.currentUser!.uid;
+                      for (var doc in snapshot.data!.docs) {
+                        var data = doc.data() as Map<String, dynamic>;
+
+                        // Nếu user đã vuốt xóa thông báo này rồi -> Bỏ qua
+                        List deletedBy = data['deletedBy'] ?? [];
+                        if (deletedBy.contains(uid)) continue;
+
+                        // Nếu chưa xóa, check xem đã đọc chưa
+                        List readBy = data['readBy'] ?? [];
+                        if (!readBy.contains(uid)) {
+                          hasUnread = true;
+                          break;
+                        }
+                      }
                     }
 
                     return Stack(
@@ -366,24 +395,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             color: Color(0xFF002045),
                             size: 28,
                           ),
-                          onPressed:
-                              _showNotificationPopup, // GỌI HÀM POPUP ĐÃ TẠO
+                          onPressed: _showNotificationPopup,
                         ),
-                        if (unreadCount > 0)
+                        if (hasUnread)
                           Positioned(
-                            top: 8,
-                            right: 8,
+                            top: 12,
+                            right: 12,
                             child: Container(
-                              padding: const EdgeInsets.all(4),
-                              decoration: const BoxDecoration(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
                                 color: Colors.red,
                                 shape: BoxShape.circle,
-                              ),
-                              child: Text(
-                                '$unreadCount',
-                                style: const TextStyle(
+                                border: Border.all(
                                   color: Colors.white,
-                                  fontSize: 10,
+                                  width: 1.5,
                                 ),
                               ),
                             ),
@@ -759,37 +785,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildExamStream() {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
-          .collection('Notifications')
+          .collection('Exams') // SỬA: Đã trả về đúng bảng Exams
           .orderBy('createdAt', descending: true)
           .snapshots(),
       builder: (context, snapshot) {
-        // 1. Kiểm tra trạng thái đang tải
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
-
-        // 2. Kiểm tra lỗi
         if (snapshot.hasError) {
-          return const Center(child: Text('Lỗi tải thông báo!'));
+          return const Center(child: Text('Lỗi tải đề thi!'));
         }
-
-        // 3. KIỂM TRA: Nếu không có dữ liệu (danh sách rỗng)
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
           return const Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.notifications_off_outlined,
-                  size: 48,
-                  color: Colors.grey,
-                ),
-                SizedBox(height: 16),
-                Text(
-                  'Hiện tại chưa có thông báo nào.',
-                  style: TextStyle(color: Colors.grey, fontSize: 16),
-                ),
-              ],
+            child: Padding(
+              padding: EdgeInsets.all(20.0),
+              child: Text(
+                'Chưa có đề thi nào.',
+                style: TextStyle(color: Colors.grey),
+              ),
             ),
           );
         }

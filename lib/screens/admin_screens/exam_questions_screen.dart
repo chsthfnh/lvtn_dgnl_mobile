@@ -211,16 +211,28 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
       }
       await batch.commit(); // Thực thi đồng loạt
 
-      // --- BƯỚC 2: TỰ ĐỘNG GỬI THÔNG BÁO CHO HỌC VIÊN NẾU ĐỀ ĐƯỢC CÔNG KHAI ---
-      if (finalData['isPublic'] == true) {
+      // --- BƯỚC 2: TỰ ĐỘNG GỬI THÔNG BÁO THÔNG MINH ---
+      bool oldPublic =
+          widget.examData['isPublic'] == true ||
+          widget.examData['isPublic'] == 'true';
+      bool newPublic =
+          finalData['isPublic'] == true || finalData['isPublic'] == 'true';
+
+      // CHỈ GỬI KHI: Tạo mới là Public, HOẶC Đang từ Nháp chuyển sang Public
+      bool shouldNotify =
+          (widget.examData['examId'] == null && newPublic) ||
+          (!oldPublic && newPublic);
+
+      if (shouldNotify) {
         await FirebaseFirestore.instance.collection('Notifications').add({
           'title': 'Đề thi mới: ${finalData['tenDeThi']}',
           'content':
-              'Admin vừa công khai đề thi mới (${finalData['thoiGian']} phút). Hãy vào thi thử ngay!',
+              'Đề thi mới (${finalData['thoiGian']} phút) đã sẵn sàng. Hãy vào thi thử ngay!',
           'createdAt': FieldValue.serverTimestamp(),
           'type': 'new_exam',
-          'examId':
-              currentExamId, // Lưu ID để sau này học viên nhấn vào là vào đề luôn
+          'examId': currentExamId,
+          'readBy': [],
+          'deletedBy': [], // <-- THÊM MẢNG NÀY ĐỂ XỬ LÝ TÍNH NĂNG XÓA BÊN USER
         });
       }
 
