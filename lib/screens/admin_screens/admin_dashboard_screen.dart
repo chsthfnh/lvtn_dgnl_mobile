@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 import '../../auth/login_screen.dart';
 import 'import_questions_screen.dart';
 import 'import_images_screen.dart';
@@ -7,6 +9,7 @@ import 'media_library_screen.dart';
 import 'question_bank_screen.dart';
 import 'create_exam_screen.dart';
 import 'exam_list_screen.dart';
+import '../user_screens/dashboard_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -19,7 +22,50 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final Color _primaryDark = const Color(0xFF28355A); // Xanh đen chủ đạo
   final Color _bgLight = const Color(0xFFF8F9FA); // Màu nền xám nhạt
 
-  // --- HÀM ĐĂNG XUẤT CHO ADMIN (ĐÃ LƯỢC BỎ GOOGLE SIGN IN ĐỂ CHỐNG LỖI) ---
+  void _showNotificationDialog() {
+    TextEditingController titleCtrl = TextEditingController();
+    TextEditingController contentCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Gửi thông báo'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: titleCtrl,
+              decoration: const InputDecoration(labelText: 'Tiêu đề'),
+            ),
+            TextField(
+              controller: contentCtrl,
+              decoration: const InputDecoration(labelText: 'Nội dung'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Hủy'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              await FirebaseFirestore.instance.collection('Notifications').add({
+                'title': titleCtrl.text,
+                'content': contentCtrl.text,
+                'createdAt': FieldValue.serverTimestamp(),
+                'type': 'admin_news', // Phân loại tin tức
+              });
+              if (mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Gửi'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- HÀM ĐĂNG XUẤT CHO ADMIN ---
   Future<void> _handleLogout() async {
     showDialog(
       context: context,
@@ -35,14 +81,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
           TextButton(
             onPressed: () async {
-              // 1. Đóng hộp thoại
               Navigator.pop(dialogContext);
-
               try {
-                // 2. Chỉ cần đăng xuất Firebase Auth là đủ bảo mật phiên đăng nhập
                 await FirebaseAuth.instance.signOut();
-
-                // 3. Chuyển trang an toàn
                 if (!mounted) return;
                 Navigator.pushAndRemoveUntil(
                   context,
@@ -85,7 +126,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   Icons.notifications_none,
                   color: Colors.black87,
                 ),
-                onPressed: () {},
+                onPressed: _showNotificationDialog,
               ),
               Positioned(
                 top: 12,
@@ -112,18 +153,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           padding: EdgeInsets.zero,
           children: [
             UserAccountsDrawerHeader(
-              decoration: const BoxDecoration(
-                color: Color(0xFF1A237E), // Màu xanh đen chủ đạo của bạn
-              ),
-              // Tự động lấy Tên hiển thị từ Firebase (nếu có), nếu không có sẽ hiện 'Quản trị viên'
-              accountName: Text(
+              decoration: const BoxDecoration(color: Color(0xFF1A237E)),
+              accountName: const Text(
                 'Quản trị viên',
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 18,
-                ),
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
               ),
-              // ĐÂY LÀ ĐOẠN ĐỔI TỪ GÁN CỨNG SANG EMAIL ĐĂNG NHẬP THỰC TẾ:
               accountEmail: Text(
                 FirebaseAuth.instance.currentUser?.email ?? 'Chưa có email',
                 style: const TextStyle(fontSize: 14, color: Colors.white70),
@@ -144,7 +178,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               ),
               onTap: () {
-                Navigator.pop(context); // Đóng menu
+                Navigator.pop(context);
               },
             ),
             ListTile(
@@ -154,8 +188,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               ),
               onTap: () {
-                Navigator.pop(context); // Đóng menu trượt
-                // Mở màn hình Thư viện hình ảnh
+                Navigator.pop(context);
                 Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -168,14 +201,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               leading: Icon(
                 Icons.account_balance_outlined,
                 color: _primaryDark,
-              ), // Biểu tượng ngân hàng
+              ),
               title: const Text(
                 'Ngân hàng câu hỏi',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               ),
               onTap: () {
-                Navigator.pop(context); // Đóng thanh menu trượt lại
-                // Mở màn hình Ngân hàng câu hỏi
+                Navigator.pop(context);
                 Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -185,22 +217,34 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               },
             ),
             ListTile(
-              leading: Icon(
-                Icons
-                    .assignment_outlined, // Đổi sang biểu tượng Tập đề thi / Bài kiểm tra
-                color: _primaryDark,
-              ),
+              leading: Icon(Icons.assignment_outlined, color: _primaryDark),
               title: const Text(
                 'Danh sách đề thi',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               ),
               onTap: () {
-                Navigator.pop(context); // Đóng Drawer trượt
+                Navigator.pop(context);
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) =>
-                        const ExamListScreen(), // Điều hướng chuẩn xác sang màn hình Danh sách Đề thi
+                    builder: (context) => const ExamListScreen(),
+                  ),
+                );
+              },
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(
+                Icons.remove_red_eye_outlined,
+                color: Colors.blue,
+              ),
+              title: const Text('Trải nghiệm Học viên'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const DashboardScreen(),
                   ),
                 );
               },
@@ -228,14 +272,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Các nút thao tác chức năng
             _buildActionCard(
               title: 'Import Questions',
               subtitle: 'Excel / CSV',
               icon: Icons.upload_file,
               isPrimary: true,
               onTap: () {
-                // Chuyển hướng sang màn hình Import Câu hỏi
                 Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -251,7 +293,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               icon: Icons.photo_library_outlined,
               isPrimary: false,
               onTap: () {
-                // Thêm lệnh chuyển trang vào đây
                 Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -277,14 +318,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ),
             const SizedBox(height: 24),
 
-            // Các thẻ Thống kê
-            _buildStatCard(
-              title: 'Total Students',
-              value: '12,450',
-              trendValue: '+ 12%',
-              icon: Icons.people_outline,
-              showChart: true,
-            ),
+            // --- ĐÃ THAY THẾ: GIAO DIỆN GIÁM SÁT HOẠT ĐỘNG THAY CHO TOTAL STUDENTS ---
+            _buildUserActivitySection(),
+
             const SizedBox(height: 16),
             _buildStatCard(
               title: 'Total Exams',
@@ -300,7 +336,369 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // --- WIDGET HELPER: Thẻ chức năng (Action Card) ---
+  // =======================================================================
+  // CÁC HÀM XÂY DỰNG GIAO DIỆN MỚI CHO TÍNH NĂNG GIÁM SÁT HOẠT ĐỘNG REAL-TIME
+  // =======================================================================
+
+  // 1. Giao diện khối giám sát ngoài trang chủ (Hiển thị 3 người)
+  Widget _buildUserActivitySection() {
+    return StreamBuilder<QuerySnapshot>(
+      // Lắng nghe toàn bộ users (Trừ admin)
+      stream: FirebaseFirestore.instance
+          .collection('Users')
+          .where('role', isNotEqualTo: 'admin')
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        List<Map<String, dynamic>> allUsers = [];
+        DateTime now = DateTime.now();
+
+        // Xử lý và phân loại trạng thái từng user
+        for (var doc in snapshot.data!.docs) {
+          var data = doc.data() as Map<String, dynamic>;
+          Timestamp? lastActiveTs = data['lastActive'];
+          String action = data['currentAction'] ?? 'offline';
+
+          bool isOffline = true;
+          if (lastActiveTs != null) {
+            // Nếu không có tương tác nào trong 15 phút -> Chuyển thành Ngoại tuyến
+            if (now.difference(lastActiveTs.toDate()).inMinutes < 15) {
+              isOffline = false;
+            }
+          }
+
+          allUsers.add({
+            'name': data['fullName'] ?? 'Học viên ẩn danh',
+            'email': data['email'] ?? '',
+            'lastActive': lastActiveTs?.toDate(),
+            'status': isOffline ? 'offline' : action,
+          });
+        }
+
+        // Sắp xếp: Ai vừa hoạt động gần nhất đưa lên đầu
+        allUsers.sort((a, b) {
+          DateTime? dateA = a['lastActive'];
+          DateTime? dateB = b['lastActive'];
+          if (dateA == null && dateB == null) return 0;
+          if (dateA == null) return 1;
+          if (dateB == null) return -1;
+          return dateB.compareTo(dateA);
+        });
+
+        // Chỉ lấy 3 người cho giao diện ngoài
+        var top3Users = allUsers.take(3).toList();
+
+        return Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey.shade200),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.02),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Trạng thái hoạt động',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF002045),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () =>
+                        _showAllUsersActivity(), // Không truyền danh sách tĩnh nữa
+                    child: const Text(
+                      'Xem tất cả >',
+                      style: TextStyle(
+                        color: Colors.blue,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Tổng số học viên: ${allUsers.length}',
+                style: const TextStyle(color: Colors.grey, fontSize: 13),
+              ),
+              const SizedBox(height: 16),
+
+              if (top3Users.isEmpty)
+                const Text(
+                  'Chưa có dữ liệu hoạt động',
+                  style: TextStyle(
+                    color: Colors.grey,
+                    fontStyle: FontStyle.italic,
+                  ),
+                )
+              else
+                ...top3Users.map((u) => _buildActivityRow(u)),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // 2. Giao diện 1 dòng User trong bảng giám sát
+  Widget _buildActivityRow(Map<String, dynamic> user) {
+    String status = user['status'];
+    Color statusColor;
+    String statusText;
+    IconData statusIcon;
+
+    switch (status) {
+      case 'idle':
+        statusColor = const Color(0xFF00C853);
+        statusText = 'Truy cập nhưng chưa làm gì';
+        statusIcon = Icons.computer;
+        break;
+      case 'exam':
+        statusColor = const Color(0xFFE65100);
+        statusText = 'Đang làm bài thi thử';
+        statusIcon = Icons.timer;
+        break;
+      case 'practice':
+        statusColor = Colors.blue;
+        statusText = 'Đang làm bài luyện tập';
+        statusIcon = Icons.edit_note;
+        break;
+      default:
+        statusColor = Colors.grey;
+        statusText = 'Ngoại tuyến';
+        statusIcon = Icons.bedtime_outlined;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Stack(
+            children: [
+              CircleAvatar(
+                backgroundColor: Colors.grey.shade100,
+                child: const Icon(Icons.person, color: Colors.grey),
+              ),
+              Positioned(
+                bottom: 0,
+                right: 0,
+                child: Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: statusColor,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  user['name'],
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(statusIcon, size: 12, color: statusColor),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        statusText,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: statusColor,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        maxLines: 1,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 3. Popup xem toàn bộ danh sách (Đã nâng cấp Real-time)
+  void _showAllUsersActivity() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        height: MediaQuery.of(context).size.height * 0.85,
+        padding: const EdgeInsets.all(20),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+
+        // THÊM STREAM BUILDER VÀO THẲNG ĐÂY ĐỂ POPUP TỰ ĐỘNG LÀM MỚI
+        child: StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('Users')
+              .where('role', isNotEqualTo: 'admin')
+              .snapshots(),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
+
+            // Tính toán lại dữ liệu y hệt bên ngoài
+            List<Map<String, dynamic>> allUsers = [];
+            DateTime now = DateTime.now();
+
+            for (var doc in snapshot.data!.docs) {
+              var data = doc.data() as Map<String, dynamic>;
+              Timestamp? lastActiveTs = data['lastActive'];
+              String action = data['currentAction'] ?? 'offline';
+
+              bool isOffline = true;
+              if (lastActiveTs != null) {
+                if (now.difference(lastActiveTs.toDate()).inMinutes < 15) {
+                  isOffline = false;
+                }
+              }
+
+              allUsers.add({
+                'name': data['fullName'] ?? 'Học viên ẩn danh',
+                'email': data['email'] ?? '',
+                'lastActive': lastActiveTs?.toDate(),
+                'status': isOffline ? 'offline' : action,
+              });
+            }
+
+            int idle = allUsers.where((u) => u['status'] == 'idle').length;
+            int exam = allUsers.where((u) => u['status'] == 'exam').length;
+            int practice = allUsers
+                .where((u) => u['status'] == 'practice')
+                .length;
+            int offline = allUsers
+                .where((u) => u['status'] == 'offline')
+                .length;
+
+            allUsers.sort((a, b) {
+              DateTime? dateA = a['lastActive'];
+              DateTime? dateB = b['lastActive'];
+              if (dateA == null && dateB == null) return 0;
+              if (dateA == null) return 1;
+              if (dateB == null) return -1;
+              return dateB.compareTo(dateA);
+            });
+
+            // Vẽ giao diện bằng dữ liệu mới nhất
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Tất cả học viên',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _buildStatChip(
+                        'Chưa làm gì ($idle)',
+                        const Color(0xFF00C853),
+                      ),
+                      const SizedBox(width: 8),
+                      _buildStatChip(
+                        'Thi thử ($exam)',
+                        const Color(0xFFE65100),
+                      ),
+                      const SizedBox(width: 8),
+                      _buildStatChip('Luyện tập ($practice)', Colors.blue),
+                      const SizedBox(width: 8),
+                      _buildStatChip('Ngoại tuyến ($offline)', Colors.grey),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: allUsers.length,
+                    itemBuilder: (context, index) =>
+                        _buildActivityRow(allUsers[index]),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  // 4. Widget Chip trạng thái màu sắc
+  Widget _buildStatChip(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.bold,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+
+  // =======================================================================
+  // CÁC HÀM HELPER CŨ CỦA BẠN (GIỮ NGUYÊN KHÔNG ĐỔI)
+  // =======================================================================
+
   Widget _buildActionCard({
     required String title,
     required String subtitle,
@@ -320,7 +718,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             color: isPrimary ? _primaryDark : Colors.grey.shade300,
           ),
           boxShadow: isPrimary
-              // Đã dùng .withValues để tránh cảnh báo Deprecated
               ? [
                   BoxShadow(
                     color: _primaryDark.withValues(alpha: 0.2),
@@ -360,7 +757,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // --- WIDGET HELPER: Thẻ Thống kê (Stat Card) ---
   Widget _buildStatCard({
     required String title,
     required String value,
@@ -433,7 +829,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               color: _primaryDark,
             ),
           ),
-
           if (showChart) ...[
             const SizedBox(height: 20),
             Row(
@@ -454,7 +849,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // --- WIDGET HELPER: Cột biểu đồ giả lập ---
   Widget _buildBar(double heightFactor, Color color) {
     return Container(
       width: 40,

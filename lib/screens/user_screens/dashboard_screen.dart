@@ -32,6 +32,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.initState();
     _fetchUserData();
     _listenToRealProgress(); // ĐÃ SỬA: Gọi hàm lắng nghe Real-time
+    updatePresence('idle');
   }
 
   @override
@@ -39,6 +40,171 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // ĐÃ THÊM: Hủy lắng nghe khi đóng màn hình để giải phóng RAM
     _historySub?.cancel();
     super.dispose();
+  }
+
+  void _showNotificationPopup() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        height: MediaQuery.of(context).size.height * 0.7,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Thông báo',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('Notifications')
+                    .orderBy('createdAt', descending: true)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData)
+                    return const Center(child: CircularProgressIndicator());
+
+                  return ListView.builder(
+                    itemCount: snapshot.data!.docs.length,
+                    itemBuilder: (context, index) {
+                      var doc = snapshot.data!.docs[index];
+                      var data = doc.data() as Map<String, dynamic>;
+                      String uid = FirebaseAuth.instance.currentUser!.uid;
+
+                      return FutureBuilder<DocumentSnapshot>(
+                        future: doc.reference
+                            .collection('ReadBy')
+                            .doc(uid)
+                            .get(),
+                        builder: (ctx, snap) {
+                          bool isRead = snap.hasData && snap.data!.exists;
+
+                          return Card(
+                            elevation: isRead ? 0 : 2,
+                            color: isRead
+                                ? Colors.white
+                                : Colors.blue.shade50, // Highlight xanh nhẹ
+                            margin: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 4,
+                            ),
+                            child: ListTile(
+                              leading: Icon(
+                                data['type'] == 'new_exam'
+                                    ? Icons.assignment
+                                    : Icons.notifications,
+                                color: isRead ? Colors.grey : Colors.blue,
+                              ),
+                              title: Text(
+                                data['title'],
+                                style: TextStyle(
+                                  fontWeight: isRead
+                                      ? FontWeight.normal
+                                      : FontWeight.bold,
+                                ),
+                              ),
+                              subtitle: Text(
+                                data['content'],
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              onTap: () async {
+                                // 1. Đánh dấu đã đọc vào Firestore
+                                await doc.reference
+                                    .collection('ReadBy')
+                                    .doc(uid)
+                                    .set({
+                                      'readAt': FieldValue.serverTimestamp(),
+                                    });
+                                _markAsReadAndShowDetail(doc, data);
+
+                                // 2. Hiển thị nội dung chi tiết
+                                if (!mounted) return;
+                                showDialog(
+                                  context: context,
+                                  builder: (dialogCtx) => AlertDialog(
+                                    title: Text(data['title']),
+                                    content: Text(data['content']),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(dialogCtx),
+                                        child: const Text('Đóng'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _markAsReadAndShowDetail(
+    DocumentSnapshot doc,
+    Map<String, dynamic> data,
+  ) async {
+    String uid = FirebaseAuth.instance.currentUser!.uid;
+
+    // 1. Đánh dấu đã đọc
+    await doc.reference.collection('ReadBy').doc(uid).set({
+      'readAt': FieldValue.serverTimestamp(),
+    });
+
+    // 2. Hiện Popup nội dung chi tiết
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(data['title']),
+        content: Text(data['content']),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Đóng'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Khai báo hàm dùng chung cập nhật trạng thái
+  void updatePresence(String action) {
+    String? uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      FirebaseFirestore.instance.collection('Users').doc(uid).update({
+        'lastActive': FieldValue.serverTimestamp(),
+        'currentAction':
+            action, // Nhận 1 trong 3 chữ: 'idle', 'exam', 'practice'
+      });
+    }
   }
 
   // --- HÀM TẢI TÊN NGƯỜI DÙNG (Giữ nguyên) ---
@@ -178,13 +344,53 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ],
               ),
               actions: [
-                IconButton(
-                  icon: const Icon(
-                    Icons.notifications_none_outlined,
-                    color: Color(0xFF002045),
-                    size: 28,
-                  ),
-                  onPressed: () {},
+                StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('Notifications')
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    // Đếm số thông báo mà User chưa xem (chưa có UID trong sub-collection ReadBy)
+                    int unreadCount = 0;
+                    if (snapshot.hasData) {
+                      // Lưu ý: Để tối ưu, ở production bạn nên dùng Cloud Function để đếm.
+                      // Đây là cách đơn giản để test:
+                      unreadCount = snapshot.data!.docs.length;
+                    }
+
+                    return Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        IconButton(
+                          icon: const Icon(
+                            Icons.notifications_none_outlined,
+                            color: Color(0xFF002045),
+                            size: 28,
+                          ),
+                          onPressed:
+                              _showNotificationPopup, // GỌI HÀM POPUP ĐÃ TẠO
+                        ),
+                        if (unreadCount > 0)
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: const BoxDecoration(
+                                color: Colors.red,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Text(
+                                '$unreadCount',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(width: 8),
               ],
@@ -206,8 +412,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         child: NavigationBar(
           selectedIndex: _selectedIndex,
-          onDestinationSelected: (index) =>
-              setState(() => _selectedIndex = index),
+          onDestinationSelected: (index) {
+            setState(() => _selectedIndex = index);
+            updatePresence('idle');
+          },
           backgroundColor: Colors.white,
           destinations: const [
             NavigationDestination(
@@ -279,7 +487,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     MaterialPageRoute(
                       builder: (context) => const PracticeSetupScreen(),
                     ),
-                  ),
+                  ).then((_) => updatePresence('idle')),
                 ),
               ),
               const SizedBox(width: 16),
@@ -295,7 +503,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     MaterialPageRoute(
                       builder: (context) => const MockExamScreen(),
                     ),
-                  ),
+                  ).then((_) => updatePresence('idle')),
                 ),
               ),
             ],
@@ -551,27 +759,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildExamStream() {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
-          .collection('Exams')
-          .where('isPublic', isEqualTo: true)
+          .collection('Notifications')
           .orderBy('createdAt', descending: true)
-          .limit(3)
           .snapshots(),
       builder: (context, snapshot) {
+        // 1. Kiểm tra trạng thái đang tải
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
-            child: Padding(
-              padding: EdgeInsets.all(20.0),
-              child: CircularProgressIndicator(),
-            ),
-          );
+          return const Center(child: CircularProgressIndicator());
         }
+
+        // 2. Kiểm tra lỗi
+        if (snapshot.hasError) {
+          return const Center(child: Text('Lỗi tải thông báo!'));
+        }
+
+        // 3. KIỂM TRA: Nếu không có dữ liệu (danh sách rỗng)
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return Container(
-            padding: const EdgeInsets.symmetric(vertical: 30),
-            alignment: Alignment.center,
-            child: const Text(
-              'Chưa có đề thi nào.',
-              style: TextStyle(color: Colors.grey),
+          return const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.notifications_off_outlined,
+                  size: 48,
+                  color: Colors.grey,
+                ),
+                SizedBox(height: 16),
+                Text(
+                  'Hiện tại chưa có thông báo nào.',
+                  style: TextStyle(color: Colors.grey, fontSize: 16),
+                ),
+              ],
             ),
           );
         }

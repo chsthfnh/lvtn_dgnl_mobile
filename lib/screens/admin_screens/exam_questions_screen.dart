@@ -211,6 +211,19 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
       }
       await batch.commit(); // Thực thi đồng loạt
 
+      // --- BƯỚC 2: TỰ ĐỘNG GỬI THÔNG BÁO CHO HỌC VIÊN NẾU ĐỀ ĐƯỢC CÔNG KHAI ---
+      if (finalData['isPublic'] == true) {
+        await FirebaseFirestore.instance.collection('Notifications').add({
+          'title': 'Đề thi mới: ${finalData['tenDeThi']}',
+          'content':
+              'Admin vừa công khai đề thi mới (${finalData['thoiGian']} phút). Hãy vào thi thử ngay!',
+          'createdAt': FieldValue.serverTimestamp(),
+          'type': 'new_exam',
+          'examId':
+              currentExamId, // Lưu ID để sau này học viên nhấn vào là vào đề luôn
+        });
+      }
+
       // Thông báo thành công
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

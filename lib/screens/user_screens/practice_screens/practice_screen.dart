@@ -43,6 +43,19 @@ class _PracticeScreenState extends State<PracticeScreen> {
     super.initState();
     _secondsRemaining = widget.timeInMinutes * 60;
     _startTimer();
+    updatePresence('practice');
+  }
+
+  // Khai báo hàm dùng chung cập nhật trạng thái
+  void updatePresence(String action) {
+    String? uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      FirebaseFirestore.instance.collection('Users').doc(uid).update({
+        'lastActive': FieldValue.serverTimestamp(),
+        'currentAction':
+            action, // Nhận 1 trong 3 chữ: 'idle', 'exam', 'practice'
+      });
+    }
   }
 
   void _startTimer() {

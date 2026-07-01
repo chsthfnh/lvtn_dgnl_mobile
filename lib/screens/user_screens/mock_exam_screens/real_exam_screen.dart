@@ -35,6 +35,19 @@ class _RealExamScreenState extends State<RealExamScreen> {
   void initState() {
     super.initState();
     _loadQuestions();
+    updatePresence('exam');
+  }
+
+  // Khai báo hàm dùng chung cập nhật trạng thái
+  void updatePresence(String action) {
+    String? uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      FirebaseFirestore.instance.collection('Users').doc(uid).update({
+        'lastActive': FieldValue.serverTimestamp(),
+        'currentAction':
+            action, // Nhận 1 trong 3 chữ: 'idle', 'exam', 'practice'
+      });
+    }
   }
 
   // --- 1. TẢI DỮ LIỆU CÂU HỎI TỪ FIREBASE ---
@@ -182,18 +195,35 @@ class _RealExamScreenState extends State<RealExamScreen> {
     String? currentUserId = FirebaseAuth.instance.currentUser?.uid;
 
     if (currentUserId != null) {
-      await FirebaseFirestore.instance.collection('ExamHistory').add({
-        'userId': currentUserId,
-        'examId': widget.examDoc.id,
-        'examName': examName,
-        'timeSpentSeconds': timeSpentSeconds,
-        'correctAnswers': correctCount,
-        'answeredCount':
-            answeredCount, // THÊM: Chỉ lưu số câu thực tế đã chọn đáp án
-        'totalQuestions':
-            _questions.length, // Giữ nguyên tổng câu đề thi để tính điểm /1200
-        'submittedAt': FieldValue.serverTimestamp(),
-      });
+      // 1. KIỂM TRA QUYỀN (ROLE) CỦA NGƯỜI DÙNG HIỆN TẠI
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance
+          .collection('Users')
+          .doc(currentUserId)
+          .get();
+
+      String role = 'student';
+      if (userDoc.exists && userDoc.data() != null) {
+        role = (userDoc.data() as Map<String, dynamic>)['role'] ?? 'student';
+      }
+
+      // 2. NẾU LÀ HỌC VIÊN THÌ MỚI LƯU VÀO DATABASE
+      if (role != 'admin') {
+        await FirebaseFirestore.instance.collection('ExamHistory').add({
+          'userId': currentUserId,
+          'examId': widget.examDoc.id, // Hoặc 'practice_mode'
+          'examName': examName,
+          'timeSpentSeconds': timeSpentSeconds,
+          'correctAnswers': correctCount,
+          'answeredCount': answeredCount,
+          'totalQuestions': _questions.length,
+          'submittedAt': FieldValue.serverTimestamp(),
+        });
+      } else {
+        // 3. NẾU LÀ ADMIN TEST: Bỏ qua lệnh lưu database, chỉ in ra console
+        debugPrint(
+          '--- CHẾ ĐỘ ADMIN TEST: Đã chặn lưu lịch sử làm bài vào Database ---',
+        );
+      }
     }
 
     if (!mounted) return;

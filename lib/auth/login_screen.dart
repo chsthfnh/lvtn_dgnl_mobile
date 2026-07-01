@@ -5,8 +5,8 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 import 'register_screen.dart';
 import 'forgot_password_screen.dart';
-import '../screens/user_screens/dashboard_screen.dart'; // Đảm bảo bạn đã có file này
-import '../screens/admin_screens/admin_dashboard_screen.dart'; // Đảm bảo bạn đã có file này
+import '../screens/user_screens/dashboard_screen.dart';
+import '../screens/admin_screens/admin_dashboard_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});

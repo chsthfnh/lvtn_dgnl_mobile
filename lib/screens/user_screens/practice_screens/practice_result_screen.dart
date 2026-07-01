@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'detailed_answer_screen.dart';
+import '../dashboard_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class PracticeResultScreen extends StatelessWidget {
   final int totalQuestions;
@@ -42,8 +44,49 @@ class PracticeResultScreen extends StatelessWidget {
             color: Color(0xFF002045),
             size: 28,
           ),
-          onPressed: () {
-            Navigator.of(context).popUntil((route) => route.isFirst);
+          onPressed: () async {
+            // 1. Hiện vòng quay loading siêu tốc để chặn bấm đúp (Tùy chọn, giúp app mượt hơn)
+            showDialog(
+              context: context,
+              barrierDismissible: false,
+              builder: (ctx) =>
+                  const Center(child: CircularProgressIndicator()),
+            );
+
+            String? uid = FirebaseAuth.instance.currentUser?.uid;
+            if (uid != null) {
+              // 2. Soi nhanh xem ai đang làm bài
+              DocumentSnapshot userDoc = await FirebaseFirestore.instance
+                  .collection('Users')
+                  .doc(uid)
+                  .get();
+              String role = 'student';
+
+              if (userDoc.exists && userDoc.data() != null) {
+                role =
+                    (userDoc.data() as Map<String, dynamic>)['role'] ??
+                    'student';
+              }
+
+              if (!context.mounted) return;
+              Navigator.pop(context); // Tắt vòng loading
+
+              // 3. ĐIỀU HƯỚNG THÔNG MINH
+              if (role == 'admin') {
+                // Dành cho Admin đang test:
+                // Xóa các màn hình thi, giữ lại trang gốc Quản trị, và đẩy trang User lên cho Admin test tiếp
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const DashboardScreen(),
+                  ),
+                  (route) => route.isFirst,
+                );
+              } else {
+                // Dành cho Học viên thật: Lùi thẳng về trang gốc của họ (chính là DashboardScreen)
+                Navigator.popUntil(context, (route) => route.isFirst);
+              }
+            }
           },
         ),
         title: const Text(

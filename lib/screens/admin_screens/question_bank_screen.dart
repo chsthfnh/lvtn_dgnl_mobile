@@ -84,6 +84,78 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
     }
   }
 
+  Future<void> _editGroupContent(
+    String maNhom,
+    String currentContent,
+    String currentImage,
+  ) async {
+    TextEditingController contentCtrl = TextEditingController(
+      text: currentContent,
+    );
+    TextEditingController imageCtrl = TextEditingController(text: currentImage);
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Sửa nội dung chung của cụm'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: contentCtrl,
+                maxLines: 5,
+                decoration: const InputDecoration(
+                  labelText: 'Nội dung đoạn văn',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: imageCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Tên file ảnh chung',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Hủy'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              // Cập nhật tất cả các câu hỏi cùng mã nhóm
+              var batch = FirebaseFirestore.instance.batch();
+              var docs = await FirebaseFirestore.instance
+                  .collection('Questions')
+                  .where('maNhom', isEqualTo: maNhom)
+                  .get();
+
+              for (var doc in docs.docs) {
+                batch.update(doc.reference, {
+                  'noiDungChung': contentCtrl.text.trim(),
+                  'anhChung': imageCtrl.text.trim(),
+                });
+              }
+              await batch.commit();
+              if (mounted) {
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Đã cập nhật toàn bộ cụm!')),
+                );
+              }
+            },
+            child: const Text('Lưu thay đổi'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _deleteAllFiltered(List<DocumentSnapshot> filteredDocs) async {
     if (filteredDocs.isEmpty) return;
 
@@ -679,7 +751,18 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-
+                    IconButton(
+                      icon: const Icon(
+                        Icons.edit,
+                        color: Colors.blue,
+                        size: 20,
+                      ),
+                      onPressed: () => _editGroupContent(
+                        firstData['maNhom'],
+                        noiDungChung,
+                        anhChung,
+                      ),
+                    ),
                     if (!_isSelectionMode)
                       InkWell(
                         onTap: () => _deleteSingleOrGroup(docs),
