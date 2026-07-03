@@ -3,7 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'practice_screens/practice_setup_screen.dart';
 import 'mock_exam_screens/mock_exam_screen.dart';
-import 'profile_screen.dart';
+import 'profile_screens/profile_screen.dart';
 import 'mock_exam_screens/exam_detail_screen.dart';
 import 'statistics_screen/statistics_screen.dart';
 import 'dart:async';

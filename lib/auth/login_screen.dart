@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-
+import 'dart:io';
 import 'register_screen.dart';
 import 'forgot_password_screen.dart';
 import '../screens/user_screens/dashboard_screen.dart';
@@ -158,6 +158,24 @@ class _LoginScreenState extends State<LoginScreen> {
   // --- HÀM 3: KIỂM TRA QUYỀN VÀ CHUYỂN TRANG ---
   Future<void> _checkRoleAndNavigate() async {
     if (!mounted) return;
+
+    // --- BẮT ĐẦU ĐOẠN LƯU LỊCH SỬ THIẾT BỊ BỔ SUNG ---
+    try {
+      String deviceName = Platform.isAndroid
+          ? 'Điện thoại Android'
+          : (Platform.isIOS ? 'Điện thoại iOS' : 'Trình duyệt Web');
+      await FirebaseFirestore.instance
+          .collection('Users')
+          .doc(_auth.currentUser!.uid)
+          .collection('LoginHistory')
+          .add({
+            'deviceInfo': deviceName,
+            'timestamp': FieldValue.serverTimestamp(),
+          });
+    } catch (e) {
+      debugPrint('Lỗi lưu thiết bị: $e');
+    }
+    // --- KẾT THÚC ĐOẠN LƯU LỊCH SỬ THIẾT BỊ ---
 
     DocumentSnapshot userDoc = await FirebaseFirestore.instance
         .collection('Users')
