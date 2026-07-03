@@ -25,23 +25,18 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
   @override
   void initState() {
     super.initState();
-    // LOGIC THÔNG MINH CHO TÍNH NĂNG SỬA:
     if (widget.examData['examId'] != null &&
         widget.examData['questions'] != null) {
-      // 1. Đang Sửa đề thi -> Tải câu hỏi cũ lên
       _loadExistingQuestions(List<String>.from(widget.examData['questions']));
     } else if (widget.examData['strategy'] == 'random') {
-      // 2. Tạo đề mới (Random) -> Bốc ngẫu nhiên
       _generateRandomQuestions();
     }
   }
 
-  // --- TẢI LẠI CÂU HỎI TỪ DATABASE KHI SỬA ĐỀ ---
   Future<void> _loadExistingQuestions(List<String> questionIds) async {
     setState(() => _isLoading = true);
     try {
       List<DocumentSnapshot> docs = [];
-      // Firebase whereIn bị giới hạn 30 item/lần, nên ta duyệt lấy lẻ từng câu
       for (String id in questionIds) {
         var doc = await FirebaseFirestore.instance
             .collection('Questions')
@@ -62,11 +57,14 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
     }
   }
 
-  // --- NGHIỆP VỤ BỐC NGẪU NHIÊN BẢO TOÀN CỤM ---
+  // --- NÂNG CẤP: BỐC NGẪU NHIÊN VÀ BÁO CÁO THIẾU CÂU HỎI ---
   Future<void> _generateRandomQuestions() async {
     setState(() => _isLoading = true);
     try {
       List<DocumentSnapshot> allFetched = [];
+      List<String> shortageMessages = []; // Danh sách lưu các lỗi thiếu câu
+      String currentExamId = widget.examData['examId'] ?? '';
+
       Map<String, Map<String, String>> dbMapping = {
         'Tiếng Việt': {'phanThi': 'Sử dụng ngôn ngữ', 'chuDe': 'Tiếng Việt'},
         'Tiếng Anh': {'phanThi': 'Sử dụng ngôn ngữ', 'chuDe': 'Tiếng Anh'},
@@ -85,17 +83,30 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
         Query query = FirebaseFirestore.instance
             .collection('Questions')
             .where('phanThi', isEqualTo: mapping['phanThi']);
-        if (mapping['chuDe']!.isNotEmpty)
+        if (mapping['chuDe']!.isNotEmpty) {
           query = query.where('chuDe', isEqualTo: mapping['chuDe']);
+        }
 
         var snap = await query.get();
-        var docs = snap.docs;
-        if (docs.isEmpty) continue;
+
+        // 1. CHỈ LẤY CÂU HỎI CHƯA CÓ CHỦ HOẶC ĐANG THUỘC VỀ ĐỀ NÀY
+        var availableDocs = snap.docs.where((doc) {
+          var data = doc.data() as Map<String, dynamic>;
+          String assignedTo = data['maDeThi'] ?? '';
+          return assignedTo.isEmpty || assignedTo == currentExamId;
+        }).toList();
+
+        if (availableDocs.isEmpty) {
+          shortageMessages.add(
+            '• ${entry.key}: Thiếu $requiredCount câu (Không có câu nào trống)',
+          );
+          continue;
+        }
 
         Map<String, List<DocumentSnapshot>> grouped = {};
         List<DocumentSnapshot> singles = [];
 
-        for (var doc in docs) {
+        for (var doc in availableDocs) {
           var data = doc.data() as Map<String, dynamic>;
           String maNhom = data['maNhom']?.toString().trim() ?? '';
           if (maNhom.isNotEmpty)
@@ -120,7 +131,22 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
           }
           if (currentCount == requiredCount) break;
         }
-        allFetched.addAll(categoryDocs);
+
+        // 2. NẾU BỐC XONG MÀ VẪN THIẾU -> GHI LẠI LỖI
+        if (currentCount < requiredCount) {
+          shortageMessages.add(
+            '• ${entry.key}: Thiếu ${requiredCount - currentCount} câu (Chỉ có sẵn $currentCount câu)',
+          );
+        } else {
+          allFetched.addAll(categoryDocs);
+        }
+      }
+
+      // 3. NẾU CÓ BẤT KỲ LỖI THIẾU CÂU NÀO -> DỪNG VÀ BÁO CÁO ADMIN
+      if (shortageMessages.isNotEmpty) {
+        setState(() => _isLoading = false);
+        _showShortageDialog(shortageMessages);
+        return;
       }
 
       setState(() {
@@ -136,18 +162,80 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
     }
   }
 
+  void _showShortageDialog(List<String> messages) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
+            SizedBox(width: 8),
+            Text(
+              'Ngân hàng thiếu câu hỏi',
+              style: TextStyle(
+                color: Colors.red,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Hệ thống không đủ câu hỏi "chưa sử dụng" để tạo đề. Cụ thể:',
+            ),
+            const SizedBox(height: 12),
+            ...messages.map(
+              (msg) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  msg,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Vui lòng thêm câu hỏi mới vào Ngân hàng, hoặc giảm số lượng cấu hình của các mục trên!',
+              style: TextStyle(fontStyle: FontStyle.italic, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: _primary),
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.pop(context); // Quay về trang thiết lập
+            },
+            child: const Text(
+              'Quay lại Cấu hình',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _openQuestionSelector() async {
     final List<DocumentSnapshot>? result = await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) =>
-          QuestionSelectorDialog(alreadySelected: _selectedQuestions),
+      builder: (context) => QuestionSelectorDialog(
+        alreadySelected: _selectedQuestions,
+        currentExamId:
+            widget.examData['examId'] ?? '', // TRUYỀN ID CỦA ĐỀ ĐANG SỬA
+      ),
     );
     if (result != null) setState(() => _selectedQuestions = result);
   }
 
-  // --- LƯU CHÍNH THỨC (CREATE / UPDATE) VÀ GÁN MÃ ĐỀ ---
   Future<void> _saveExam() async {
     if (_selectedQuestions.length < 120) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -162,7 +250,15 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
 
     setState(() => _isLoading = true);
 
-    List<String> questionIds = _selectedQuestions.map((d) => d.id).toList();
+    List<String> newQuestionIds = _selectedQuestions.map((d) => d.id).toList();
+
+    // NÂNG CẤP: TÌM NHỮNG CÂU HỎI BỊ ADMIN BỎ TICK (LOẠI KHỎI ĐỀ) ĐỂ XÓA MÃ ĐỀ
+    List<String> oldQuestionIds = widget.examData['questions'] != null
+        ? List<String>.from(widget.examData['questions'])
+        : [];
+    List<String> removedQuestionIds = oldQuestionIds
+        .where((id) => !newQuestionIds.contains(id))
+        .toList();
 
     Map<String, dynamic> finalData = {
       'tenDeThi': widget.examData['tenDeThi'],
@@ -173,26 +269,23 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
       'shuffleQuestions': widget.examData['shuffleQuestions'],
       'shuffleOptions': widget.examData['shuffleOptions'],
       'isPublic': widget.examData['isPublic'],
-
-      'questions': questionIds,
-      'soCauHoi': questionIds.length,
+      'questions': newQuestionIds,
+      'soCauHoi': newQuestionIds.length,
       'config': widget.config,
       'luotLamBai': widget.examData['luotLamBai'],
       'dangLamBai': widget.examData['dangLamBai'],
     };
 
     try {
-      String currentExamId; // Biến lưu mã đề thi
+      String currentExamId;
 
       if (widget.examData['examId'] != null) {
-        // CẬP NHẬT ĐỀ THI (Lấy mã đề cũ)
         currentExamId = widget.examData['examId'];
         await FirebaseFirestore.instance
             .collection('Exams')
             .doc(currentExamId)
             .update(finalData);
       } else {
-        // TẠO MỚI ĐỀ THI (Lấy mã đề tự sinh từ Firebase)
         finalData['createdAt'] = FieldValue.serverTimestamp();
         DocumentReference newExamRef = await FirebaseFirestore.instance
             .collection('Exams')
@@ -200,25 +293,33 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
         currentExamId = newExamRef.id;
       }
 
-      // --- ĐOẠN MỚI NÂNG CẤP: DÙNG BATCH ĐỂ GÁN MÃ ĐỀ VÀO CÂU HỎI ---
       WriteBatch batch = FirebaseFirestore.instance.batch();
-      for (String qId in questionIds) {
+
+      // 1. Gán mã đề cho các câu hỏi đang chọn
+      for (String qId in newQuestionIds) {
         DocumentReference qRef = FirebaseFirestore.instance
             .collection('Questions')
             .doc(qId);
-        // Cập nhật thêm trường 'maDeThi' cho từng câu hỏi
         batch.update(qRef, {'maDeThi': currentExamId});
       }
-      await batch.commit(); // Thực thi đồng loạt
 
-      // --- BƯỚC 2: TỰ ĐỘNG GỬI THÔNG BÁO THÔNG MINH ---
+      // 2. Giải phóng mã đề cho các câu hỏi bị bỏ ra ngoài
+      for (String qId in removedQuestionIds) {
+        DocumentReference qRef = FirebaseFirestore.instance
+            .collection('Questions')
+            .doc(qId);
+        batch.update(qRef, {
+          'maDeThi': '',
+        }); // Xóa mã đề để đưa về Ngân hàng chung
+      }
+
+      await batch.commit();
+
       bool oldPublic =
           widget.examData['isPublic'] == true ||
           widget.examData['isPublic'] == 'true';
       bool newPublic =
           finalData['isPublic'] == true || finalData['isPublic'] == 'true';
-
-      // CHỈ GỬI KHI: Tạo mới là Public, HOẶC Đang từ Nháp chuyển sang Public
       bool shouldNotify =
           (widget.examData['examId'] == null && newPublic) ||
           (!oldPublic && newPublic);
@@ -232,11 +333,10 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
           'type': 'new_exam',
           'examId': currentExamId,
           'readBy': [],
-          'deletedBy': [], // <-- THÊM MẢNG NÀY ĐỂ XỬ LÝ TÍNH NĂNG XÓA BÊN USER
+          'deletedBy': [],
         });
       }
 
-      // Thông báo thành công
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -247,14 +347,8 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
             ),
           ),
         );
-      }
-
-      if (mounted) {
-        // Lùi chính xác 2 bước (Từ Màn hình soạn -> Tạo đề -> Danh sách đề)
         int count = 0;
-        Navigator.popUntil(context, (route) {
-          return count++ == 2;
-        });
+        Navigator.popUntil(context, (route) => count++ == 2);
       }
     } catch (e) {
       if (mounted)
@@ -410,8 +504,6 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
                 ),
               ),
             ),
-
-          // HIỂN THỊ NÚT RE-RANDOM NẾU ĐANG SỬA ĐỀ NGẪU NHIÊN
           if (!isManual && isEditing)
             Expanded(
               child: OutlinedButton.icon(
@@ -425,7 +517,6 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
                 ),
               ),
             ),
-
           if (isManual || isEditing) const SizedBox(width: 12),
           Expanded(
             flex: 2,
@@ -448,10 +539,15 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
   }
 }
 
-// BẢNG CHỌN TỪ NGÂN HÀNG (GIỮ NGUYÊN)
 class QuestionSelectorDialog extends StatefulWidget {
   final List<DocumentSnapshot> alreadySelected;
-  const QuestionSelectorDialog({super.key, required this.alreadySelected});
+  final String currentExamId; // NHẬN ID CỦA ĐỀ ĐANG SỬA
+
+  const QuestionSelectorDialog({
+    super.key,
+    required this.alreadySelected,
+    required this.currentExamId,
+  });
 
   @override
   State<QuestionSelectorDialog> createState() => _QuestionSelectorDialogState();
@@ -525,14 +621,30 @@ class _QuestionSelectorDialogState extends State<QuestionSelectorDialog> {
               builder: (context, snapshot) {
                 if (!snapshot.hasData)
                   return const Center(child: CircularProgressIndicator());
-                var docs = snapshot.data!.docs;
-                if (_filterPhanThi != 'Tất cả')
-                  docs = docs
-                      .where(
-                        (d) => (d.data() as Map)['phanThi'] == _filterPhanThi,
-                      )
-                      .toList();
-                _allDocs = snapshot.data!.docs;
+
+                // NÂNG CẤP: LỌC BỎ NHỮNG CÂU ĐÃ THUỘC ĐỀ THI KHÁC
+                var docs = snapshot.data!.docs.where((d) {
+                  var data = d.data() as Map<String, dynamic>;
+                  if (_filterPhanThi != 'Tất cả' &&
+                      data['phanThi'] != _filterPhanThi)
+                    return false;
+
+                  String assignedTo = data['maDeThi'] ?? '';
+                  return assignedTo.isEmpty ||
+                      assignedTo == widget.currentExamId;
+                }).toList();
+
+                _allDocs = docs;
+
+                if (docs.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      'Không còn câu hỏi trống nào ở phần này!',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  );
+                }
+
                 return ListView.builder(
                   padding: const EdgeInsets.all(20),
                   itemCount: docs.length,

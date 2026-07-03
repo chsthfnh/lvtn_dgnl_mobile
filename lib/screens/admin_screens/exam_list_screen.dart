@@ -17,7 +17,7 @@ class _ExamListScreenState extends State<ExamListScreen> {
   String _selectedTrangThai = 'Tất cả';
   final List<String> _trangThaiList = ['Tất cả', 'Công khai', 'Bản nháp'];
 
-  // --- HÀM XÓA ĐỀ THI ---
+  // --- HÀM XÓA ĐỀ THI VÀ GIẢI PHÓNG CÂU HỎI ---
   Future<void> _deleteExam(DocumentSnapshot doc) async {
     Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
     int dangLamBai = data['dangLamBai'] ?? 0;
@@ -30,10 +30,11 @@ class _ExamListScreenState extends State<ExamListScreen> {
       return;
     }
 
-    String warningText = 'Bạn có chắc chắn muốn xóa đề thi này không?';
+    String warningText =
+        'Bạn có chắc chắn muốn xóa đề thi này không? Các câu hỏi trong đề sẽ được trả về ngân hàng chung.';
     if (luotLamBai > 0) {
       warningText =
-          'Đã có $luotLamBai lượt sinh viên hoàn thành đề thi này.\n\nHệ thống sẽ xóa đề và [Gửi thông báo] đến tài khoản của các sinh viên này. Bạn vẫn muốn tiếp tục?';
+          'Đã có $luotLamBai lượt sinh viên hoàn thành đề thi này.\n\nHệ thống sẽ xóa đề, trả các câu hỏi về ngân hàng chung và [Gửi thông báo] đến tài khoản của sinh viên. Bạn vẫn muốn tiếp tục?';
     }
 
     bool confirm =
@@ -64,17 +65,63 @@ class _ExamListScreenState extends State<ExamListScreen> {
         false;
 
     if (confirm) {
+      // Bật dialog loading chờ xử lý
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => const Center(child: CircularProgressIndicator()),
+      );
+
       try {
-        await FirebaseFirestore.instance
-            .collection('Exams')
-            .doc(doc.id)
-            .delete();
-        if (mounted)
+        // 1. Tìm tất cả câu hỏi đang được gắn với mã đề thi này
+        QuerySnapshot questionsSnap = await FirebaseFirestore.instance
+            .collection('Questions')
+            .where('maDeThi', isEqualTo: doc.id)
+            .get();
+
+        // 2. Khởi tạo Batch để gộp chung nhiều thao tác thành 1 cục
+        WriteBatch batch = FirebaseFirestore.instance.batch();
+
+        // Xóa thuộc tính maDeThi của tất cả câu hỏi tìm được (Trả về ngân hàng trống)
+        for (var qDoc in questionsSnap.docs) {
+          batch.update(qDoc.reference, {'maDeThi': ''});
+        }
+
+        // 3. Xóa document Đề thi
+        batch.delete(doc.reference);
+
+        // 4. Nếu đã có người làm bài, tự động sinh ra một thông báo
+        if (luotLamBai > 0) {
+          DocumentReference notifRef = FirebaseFirestore.instance
+              .collection('Notifications')
+              .doc();
+          batch.set(notifRef, {
+            'title': 'Đề thi đã bị gỡ bỏ',
+            'content':
+                'Đề thi "${data['tenDeThi']}" đã bị Admin gỡ khỏi hệ thống.',
+            'type': 'exam_deleted',
+            'createdAt': FieldValue.serverTimestamp(),
+            'readBy': [],
+            'deletedBy': [],
+          });
+        }
+
+        // 5. Commit thực thi toàn bộ luồng trên cùng lúc
+        await batch.commit();
+
+        if (mounted) {
+          Navigator.pop(context); // Tắt loading
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Đã xóa đề thi thành công!')),
+            const SnackBar(
+              content: Text('Đã xóa đề thi và giải phóng câu hỏi thành công!'),
+            ),
           );
+        }
       } catch (e) {
-        if (mounted) _showErrorSnackBar('Lỗi: $e');
+        if (mounted) {
+          Navigator.pop(context); // Tắt loading
+          _showErrorSnackBar('Lỗi: $e');
+        }
       }
     }
   }
