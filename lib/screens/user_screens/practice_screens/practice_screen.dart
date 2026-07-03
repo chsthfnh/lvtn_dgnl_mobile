@@ -5,6 +5,7 @@ import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'practice_result_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'level_config.dart';
 
 const _primaryColor = Color(0xFF002045);
 const _onPrimaryColor = Colors.white;
@@ -17,14 +18,22 @@ class PracticeScreen extends StatefulWidget {
   final List<DocumentSnapshot> questions;
   final int timeInMinutes;
   final String subjectName;
-  final bool isTab; // THÊM KHAI BÁO BIẾN
+  final bool isTab;
+
+  // 3 BIẾN MỚI CHO TÍNH NĂNG LEVEL
+  final bool isLevelMode;
+  final int currentLevel;
+  final String progressKey;
 
   const PracticeScreen({
     super.key,
     required this.questions,
     required this.timeInMinutes,
     required this.subjectName,
-    this.isTab = false, // THÊM VÀO CONSTRUCTOR CÓ GIÁ TRỊ MẶC ĐỊNH
+    this.isTab = false,
+    this.isLevelMode = false,
+    this.currentLevel = 1,
+    this.progressKey = '',
   });
 
   @override
@@ -46,14 +55,12 @@ class _PracticeScreenState extends State<PracticeScreen> {
     updatePresence('practice');
   }
 
-  // Khai báo hàm dùng chung cập nhật trạng thái
   void updatePresence(String action) {
     String? uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid != null) {
       FirebaseFirestore.instance.collection('Users').doc(uid).update({
         'lastActive': FieldValue.serverTimestamp(),
-        'currentAction':
-            action, // Nhận 1 trong 3 chữ: 'idle', 'exam', 'practice'
+        'currentAction': action,
       });
     }
   }
@@ -128,17 +135,21 @@ class _PracticeScreenState extends State<PracticeScreen> {
     _processResults();
   }
 
+  // =====================================================================
+  // HÀM CHẤM ĐIỂM VÀ LƯU TIẾN TRÌNH LEVEL (CỐT LÕI CỦA GIAI ĐOẠN 2)
+  // =====================================================================
   void _processResults() async {
     int correctCount = 0;
-    int answeredCount = 0; // THÊM BIẾN ĐẾM SỐ CÂU ĐÃ CHỌN ĐÁP ÁN
+    int answeredCount = 0;
 
+    // 1. Chấm điểm
     for (int i = 0; i < widget.questions.length; i++) {
       var data = widget.questions[i].data() as Map<String, dynamic>;
       String correctAnsLetter = data['correctAnswer'] ?? 'A';
       int? userAnsIndex = _userAnswers[i];
 
       if (userAnsIndex != null) {
-        answeredCount++; // Câu nào có chọn đáp án thì mới tính
+        answeredCount++;
         String userAnsLetter = String.fromCharCode(65 + userAnsIndex);
         if (userAnsLetter == correctAnsLetter) correctCount++;
       }
@@ -146,22 +157,77 @@ class _PracticeScreenState extends State<PracticeScreen> {
 
     int timeSpentSeconds = (widget.timeInMinutes * 60) - _secondsRemaining;
 
+    // 2. Tính toán Gamification
+    double accuracy = widget.questions.isEmpty
+        ? 0
+        : correctCount / widget.questions.length;
+    int stars = LevelConfig.calculateStars(accuracy);
+    bool isPass = accuracy >= 0.9; // Yêu cầu đạt >= 90%
+    bool didLevelUp = false;
+    int newConsecutive = 0;
+
     String? currentUserId = FirebaseAuth.instance.currentUser?.uid;
     if (currentUserId != null) {
+      // 3A. LƯU LỊCH SỬ THI CHUNG
       await FirebaseFirestore.instance.collection('ExamHistory').add({
         'userId': currentUserId,
-        'examId': 'practice_mode',
+        'examId': widget.isLevelMode ? 'level_mode' : 'practice_mode',
         'examName': 'Luyện tập: ${widget.subjectName}',
         'timeSpentSeconds': timeSpentSeconds,
         'correctAnswers': correctCount,
-        'answeredCount': answeredCount, // THÊM: Chỉ lưu số câu thực tế đã làm
+        'answeredCount': answeredCount,
         'totalQuestions': widget.questions.length,
+        'stars': stars, // Bổ sung lưu sao vào thống kê
+        'level': widget.isLevelMode ? widget.currentLevel : null,
         'submittedAt': FieldValue.serverTimestamp(),
       });
+
+      // 3B. CẬP NHẬT LEVEL NẾU ĐANG Ở CHẾ ĐỘ VƯỢT ẢI
+      if (widget.isLevelMode) {
+        DocumentReference progressRef = FirebaseFirestore.instance
+            .collection('UserProgress')
+            .doc(currentUserId);
+        DocumentSnapshot snap = await progressRef.get();
+
+        int currentConsecutive = 0;
+        int savedLevel = widget.currentLevel;
+
+        if (snap.exists && snap.data() != null) {
+          var data = snap.data() as Map<String, dynamic>;
+          if (data.containsKey(widget.progressKey)) {
+            currentConsecutive =
+                data[widget.progressKey]['consecutivePasses'] ?? 0;
+            savedLevel = data[widget.progressKey]['level'] ?? 1;
+          }
+        }
+
+        if (isPass) {
+          newConsecutive = currentConsecutive + 1;
+          if (newConsecutive >= 2 && savedLevel < 10) {
+            savedLevel++; // Thăng cấp
+            newConsecutive = 0; // Đạt cấp mới thì reset số lần liên tiếp
+            didLevelUp = true;
+          }
+        } else {
+          newConsecutive =
+              0; // Dưới 90% -> Đứt chuỗi, phải cày lại 2 lần liên tiếp
+        }
+
+        await progressRef.set(
+          {
+            widget.progressKey: {
+              'level': savedLevel,
+              'consecutivePasses': newConsecutive,
+            },
+          },
+          SetOptions(merge: true),
+        ); // Dùng merge để không đè mất các môn học khác
+      }
     }
 
     if (!mounted) return;
 
+    // 4. Chuyển sang màn hình Kết quả với dữ liệu Gamification
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
@@ -172,12 +238,19 @@ class _PracticeScreenState extends State<PracticeScreen> {
           subjectName: widget.subjectName,
           questions: widget.questions,
           userAnswers: _userAnswers,
-          isTab: widget.isTab, // BÀN GIAO LẠI BIẾN ISTAB CHO MÀN HÌNH KẾT QUẢ
+          isTab: widget.isTab,
+          // CÁC THÔNG SỐ ĐỂ HIỆN CHÚC MỪNG
+          isLevelMode: widget.isLevelMode,
+          stars: stars,
+          isPass: isPass,
+          didLevelUp: didLevelUp,
+          consecutivePasses: newConsecutive,
         ),
       ),
     );
   }
 
+  // --- GIAO DIỆN BÊN DƯỚI GIỮ NGUYÊN HOÀN TOÀN ---
   @override
   Widget build(BuildContext context) {
     if (widget.questions.isEmpty)
@@ -479,11 +552,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
   Widget _buildOptionTile(int optionIndex, String letter, String content) {
     bool isSelected = _userAnswers[_currentIndex] == optionIndex;
     return GestureDetector(
-      onTap: () {
-        setState(() {
-          _userAnswers[_currentIndex] = optionIndex;
-        });
-      },
+      onTap: () => setState(() => _userAnswers[_currentIndex] = optionIndex),
       child: Container(
         constraints: const BoxConstraints(minHeight: 60),
         margin: const EdgeInsets.only(bottom: 12),

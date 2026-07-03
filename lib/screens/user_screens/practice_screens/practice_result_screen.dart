@@ -11,7 +11,14 @@ class PracticeResultScreen extends StatelessWidget {
   final String subjectName;
   final List<DocumentSnapshot> questions;
   final Map<int, int> userAnswers;
-  final bool isTab; // THÊM KHAI BÁO BIẾN TRẠNG THÁI NGUỒN VÀO
+  final bool isTab;
+
+  // BIẾN THÔNG TIN GAMIFICATION (TỪ BƯỚC CHẤM ĐIỂM TRUYỀN SANG)
+  final bool isLevelMode;
+  final int stars;
+  final bool isPass;
+  final bool didLevelUp;
+  final int consecutivePasses;
 
   const PracticeResultScreen({
     super.key,
@@ -21,7 +28,12 @@ class PracticeResultScreen extends StatelessWidget {
     required this.subjectName,
     required this.questions,
     required this.userAnswers,
-    this.isTab = false, // THÊM VÀO CONSTRUCTOR
+    this.isTab = false,
+    this.isLevelMode = false,
+    this.stars = 0,
+    this.isPass = false,
+    this.didLevelUp = false,
+    this.consecutivePasses = 0,
   });
 
   @override
@@ -45,36 +57,27 @@ class PracticeResultScreen extends StatelessWidget {
             size: 28,
           ),
           onPressed: () async {
-            // 1. Hiện vòng quay loading siêu tốc để chặn bấm đúp (Tùy chọn, giúp app mượt hơn)
             showDialog(
               context: context,
               barrierDismissible: false,
               builder: (ctx) =>
                   const Center(child: CircularProgressIndicator()),
             );
-
             String? uid = FirebaseAuth.instance.currentUser?.uid;
             if (uid != null) {
-              // 2. Soi nhanh xem ai đang làm bài
               DocumentSnapshot userDoc = await FirebaseFirestore.instance
                   .collection('Users')
                   .doc(uid)
                   .get();
               String role = 'student';
-
               if (userDoc.exists && userDoc.data() != null) {
                 role =
                     (userDoc.data() as Map<String, dynamic>)['role'] ??
                     'student';
               }
-
               if (!context.mounted) return;
-              Navigator.pop(context); // Tắt vòng loading
-
-              // 3. ĐIỀU HƯỚNG THÔNG MINH
+              Navigator.pop(context);
               if (role == 'admin') {
-                // Dành cho Admin đang test:
-                // Xóa các màn hình thi, giữ lại trang gốc Quản trị, và đẩy trang User lên cho Admin test tiếp
                 Navigator.pushAndRemoveUntil(
                   context,
                   MaterialPageRoute(
@@ -83,7 +86,6 @@ class PracticeResultScreen extends StatelessWidget {
                   (route) => route.isFirst,
                 );
               } else {
-                // Dành cho Học viên thật: Lùi thẳng về trang gốc của họ (chính là DashboardScreen)
                 Navigator.popUntil(context, (route) => route.isFirst);
               }
             }
@@ -104,6 +106,9 @@ class PracticeResultScreen extends StatelessWidget {
             child: ListView(
               padding: const EdgeInsets.all(24),
               children: [
+                // HIỂN THỊ KHUNG THÔNG BÁO LEVEL NẾU Ở CHẾ ĐỘ VƯỢT ẢI
+                if (isLevelMode) _buildLevelFeedbackCard(),
+
                 Container(
                   padding: const EdgeInsets.all(24),
                   decoration: BoxDecoration(
@@ -181,7 +186,6 @@ class PracticeResultScreen extends StatelessWidget {
               ],
             ),
           ),
-
           Container(
             padding: const EdgeInsets.all(20),
             color: Colors.white,
@@ -189,10 +193,7 @@ class PracticeResultScreen extends StatelessWidget {
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: () {
-                      // ĐÃ SỬA: Chỉ cần Pop (lùi 1 bước) là lòi ra màn hình Chọn môn ngay bên dưới
-                      Navigator.pop(context);
-                    },
+                    onPressed: () => Navigator.pop(context),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
@@ -249,6 +250,65 @@ class PracticeResultScreen extends StatelessWidget {
     );
   }
 
+  // KHUNG ĐỘNG VIÊN GAMIFICATION
+  Widget _buildLevelFeedbackCard() {
+    Color bgColor = isPass ? Colors.green.shade50 : Colors.orange.shade50;
+    Color textColor = isPass ? Colors.green.shade800 : Colors.orange.shade800;
+    IconData icon = isPass ? Icons.emoji_events : Icons.info_outline;
+
+    String title = '';
+    String subtitle = '';
+
+    if (didLevelUp) {
+      title = '🎉 THĂNG CẤP THÀNH CÔNG! 🎉';
+      subtitle =
+          'Tuyệt vời! Bạn đã đạt >= 90% trong 2 lần liên tiếp. Level tiếp theo đã được mở khóa!';
+    } else if (isPass) {
+      title = '🔥 XUẤT SẮC! 🔥';
+      subtitle =
+          'Bạn đã vượt mốc 90%. Hãy giữ phong độ và đạt >= 90% ở lần tiếp theo để thăng cấp nhé! (Chuỗi hiện tại: $consecutivePasses/2)';
+    } else {
+      title = 'CỐ GẮNG HƠN NHÉ!';
+      subtitle =
+          'Bạn cần đạt tối thiểu 90% điểm số trong 2 lần liên tiếp để mở khóa Level tiếp theo. Đừng bỏ cuộc!';
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: textColor.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: textColor, size: 44),
+          const SizedBox(height: 12),
+          Text(
+            title,
+            style: TextStyle(
+              color: textColor,
+              fontWeight: FontWeight.bold,
+              fontSize: 18,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: textColor.withOpacity(0.9),
+              fontSize: 14,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildStat(IconData icon, String val, String label, Color color) {
     return Column(
       children: [
@@ -292,6 +352,37 @@ class PracticeResultScreen extends StatelessWidget {
             backgroundColor: Colors.grey.shade200,
             color: Colors.green,
             minHeight: 8,
+          ),
+          const SizedBox(height: 20),
+
+          // HÀNG SAO GAMIFICATION BÊN DƯỚI THANH TIẾN ĐỘ
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(5, (index) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Icon(
+                  index < stars
+                      ? Icons.star_rounded
+                      : Icons.star_outline_rounded,
+                  color: Colors.amber.shade500,
+                  size: 36,
+                ),
+              );
+            }),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            stars == 5
+                ? 'Tuyệt đỉnh!'
+                : stars >= 3
+                ? 'Khá tốt!'
+                : 'Cần ôn tập thêm',
+            style: TextStyle(
+              color: Colors.grey.shade600,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),

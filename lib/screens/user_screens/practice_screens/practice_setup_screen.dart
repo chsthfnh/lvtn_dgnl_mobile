@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'practice_screen.dart';
+import 'level_config.dart';
 
 class PracticeSetupScreen extends StatefulWidget {
-  final bool isTab; // Kiểm tra xem có phải truy cập từ thanh Menu hay không
+  final bool isTab;
 
   const PracticeSetupScreen({super.key, this.isTab = false});
 
@@ -12,7 +14,6 @@ class PracticeSetupScreen extends StatefulWidget {
 }
 
 class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
-  // --- BẢNG MÀU TỪ DESIGN SYSTEM "COGNITIVE MASTERY" ---
   final Color _primary = const Color(0xFF002045);
   final Color _onPrimary = const Color(0xFFFFFFFF);
   final Color _surface = const Color(0xFFF8F9FF);
@@ -20,11 +21,14 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
   final Color _outline = const Color(0xFFC4C6CF);
   final Color _secondary = const Color(0xFF006E2F);
 
-  // --- TRẠNG THÁI LỰA CHỌN ---
+  // --- TRẠNG THÁI LỰA CHỌN MỚI ---
+  bool _isLevelMode = true; // Mặc định là chế độ Vượt ải
+  int _currentLevel = 1;
+
   String? _selectedPhanThi;
   String _selectedChuDe = 'Tất cả';
-  int _questionCount = 20;
-  int _duration = 30;
+  int _questionCount = 20; // Dùng cho chế độ cũ
+  int _duration = 30; // Dùng cho cả 2 chế độ
 
   bool _isLoading = false;
 
@@ -43,81 +47,201 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
     },
   };
 
-  // --- THUẬT TOÁN LẤY CÂU HỎI VÀ KIỂM TRA SỐ LƯỢNG ---
+  // Lấy "từ khóa" để lưu tiến trình (VD: "Tiếng Việt", hoặc "Toán học")
+  String get _progressKey =>
+      _selectedChuDe == 'Tất cả' ? _selectedPhanThi ?? '' : _selectedChuDe;
+
+  @override
+  void initState() {
+    super.initState();
+    // Khởi tạo mặc định
+    _selectedPhanThi = 'Sử dụng ngôn ngữ';
+    _selectedChuDe = 'Tiếng Việt';
+    _fetchUserProgress();
+  }
+
+  // --- HÀM 1: LẤY TIẾN TRÌNH TỪ FIREBASE ---
+  Future<void> _fetchUserProgress() async {
+    if (_selectedPhanThi == null) return;
+
+    String uid = FirebaseAuth.instance.currentUser!.uid;
+    try {
+      DocumentSnapshot doc = await FirebaseFirestore.instance
+          .collection('UserProgress')
+          .doc(uid)
+          .get();
+      if (doc.exists && doc.data() != null) {
+        var data = doc.data() as Map<String, dynamic>;
+        if (data.containsKey(_progressKey)) {
+          setState(() {
+            _currentLevel = data[_progressKey]['level'] ?? 1;
+          });
+          return;
+        }
+      }
+      // Nếu chưa từng học môn này
+      setState(() => _currentLevel = 1);
+    } catch (e) {
+      debugPrint('Lỗi tải tiến trình: $e');
+    }
+  }
+
+  // --- HÀM 2: RESET TIẾN TRÌNH ---
+  void _resetProgress() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text(
+          'Xác nhận Reset',
+          style: TextStyle(color: Colors.red),
+        ),
+        content: Text(
+          'Bạn có chắc chắn muốn xóa toàn bộ tiến trình của phần "$_progressKey" và bắt đầu lại từ Level 1 không?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              setState(() => _isLoading = true);
+              String uid = FirebaseAuth.instance.currentUser!.uid;
+              await FirebaseFirestore.instance
+                  .collection('UserProgress')
+                  .doc(uid)
+                  .set({
+                    _progressKey: {'level': 1, 'consecutivePasses': 0},
+                  }, SetOptions(merge: true));
+
+              setState(() {
+                _currentLevel = 1;
+                _isLoading = false;
+              });
+              if (mounted)
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Đã reset tiến trình thành công!'),
+                  ),
+                );
+            },
+            child: const Text(
+              'Xác nhận Reset',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- HÀM 3: LUỒNG BỐC CÂU HỎI CHÍNH ---
   Future<void> _startPractice() async {
     if (_selectedPhanThi == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Vui lòng chọn một môn học để luyện tập!'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      _showError('Vui lòng chọn một môn học để luyện tập!');
       return;
     }
 
+    if (_isLevelMode) {
+      await _startLevelPractice();
+    } else {
+      await _startFreePractice(); // Gọi lại hàm cũ của bạn
+    }
+  }
+
+  // LUỒNG MỚI: BỐC CÂU HỎI THEO LEVEL
+  Future<void> _startLevelPractice() async {
     setState(() => _isLoading = true);
 
+    // 1. Tính toán số lượng cần thiết
+    int totalNeeded = LevelConfig.questionCount[_progressKey] ?? 30;
+    int easyNeeded =
+        (totalNeeded * LevelConfig.difficultyRatio[_currentLevel]!['Dễ']!)
+            .round();
+    int medNeeded =
+        (totalNeeded *
+                LevelConfig.difficultyRatio[_currentLevel]!['Trung bình']!)
+            .round();
+    int hardNeeded =
+        totalNeeded - easyNeeded - medNeeded; // Bù trừ phần dư để tổng luôn đủ
+
+    try {
+      List<DocumentSnapshot> finalQuestions = [];
+
+      // Hàm helper để bốc theo độ khó
+      Future<void> fetchByDifficulty(
+        String difficulty,
+        int requiredCount,
+      ) async {
+        if (requiredCount <= 0) return;
+
+        Query query = FirebaseFirestore.instance
+            .collection('Questions')
+            .where('phanThi', isEqualTo: _selectedPhanThi)
+            .where('doKho', isEqualTo: difficulty);
+
+        if (_selectedChuDe != 'Tất cả') {
+          query = query.where('chuDe', isEqualTo: _selectedChuDe);
+        }
+
+        var snap = await query.get();
+        var docs = snap.docs;
+        docs.shuffle();
+
+        // Xử lý câu hỏi chùm cơ bản
+        int currentCount = 0;
+        for (var doc in docs) {
+          if (currentCount < requiredCount) {
+            finalQuestions.add(doc);
+            currentCount++;
+          }
+        }
+      }
+
+      // 2. Thực thi bốc 3 loại
+      await fetchByDifficulty('Dễ', easyNeeded);
+      await fetchByDifficulty('Trung bình', medNeeded);
+      await fetchByDifficulty('Khó', hardNeeded);
+
+      setState(() => _isLoading = false);
+
+      if (finalQuestions.length < totalNeeded) {
+        _showError(
+          'Ngân hàng chưa đủ câu hỏi cho cấu hình Level $_currentLevel (Cần $totalNeeded, Đang có ${finalQuestions.length}). Admin cần thêm câu hỏi!',
+        );
+        return;
+      }
+
+      finalQuestions.shuffle(); // Xáo trộn lần cuối để không bị Dễ đầu Khó đuôi
+      _showSuccessDialog(finalQuestions, totalNeeded);
+    } catch (e) {
+      _showError('Lỗi hệ thống: $e');
+    }
+  }
+
+  // LUỒNG CŨ: TỰ DO (Giữ nguyên logic của bạn)
+  Future<void> _startFreePractice() async {
+    setState(() => _isLoading = true);
     try {
       Query query = FirebaseFirestore.instance
           .collection('Questions')
           .where('phanThi', isEqualTo: _selectedPhanThi);
-
-      if (_selectedChuDe != 'Tất cả') {
+      if (_selectedChuDe != 'Tất cả')
         query = query.where('chuDe', isEqualTo: _selectedChuDe);
-      }
 
       var snap = await query.get();
       var docs = snap.docs;
+      docs.shuffle();
 
-      // Chặn kiểm tra số lượng câu hỏi nghiêm ngặt
       if (docs.length < _questionCount) {
-        _showError(
-          'Vượt quá số lượng câu hỏi đang có! Ngân hàng hiện chỉ có ${docs.length} câu phù hợp với cấu hình này.',
-        );
+        _showError('Ngân hàng hiện chỉ có ${docs.length} câu phù hợp.');
         return;
-      }
-
-      // Thuật toán xáo trộn bảo toàn cụm nhóm câu hỏi chùm
-      Map<String, List<DocumentSnapshot>> grouped = {};
-      List<DocumentSnapshot> singles = [];
-
-      for (var doc in docs) {
-        var data = doc.data() as Map<String, dynamic>;
-        String maNhom = data['maNhom']?.toString().trim() ?? '';
-        if (maNhom.isNotEmpty) {
-          grouped.putIfAbsent(maNhom, () => []).add(doc);
-        } else {
-          singles.add(doc);
-        }
-      }
-
-      List<List<DocumentSnapshot>> allBlocks = [];
-      allBlocks.addAll(grouped.values);
-      allBlocks.addAll(singles.map((e) => [e]));
-
-      allBlocks.shuffle();
-
-      List<DocumentSnapshot> finalQuestions = [];
-      int currentCount = 0;
-
-      for (var block in allBlocks) {
-        if (currentCount + block.length <= _questionCount) {
-          finalQuestions.addAll(block);
-          currentCount += block.length;
-        }
-        if (currentCount == _questionCount) break;
       }
 
       setState(() => _isLoading = false);
-
-      if (finalQuestions.length < _questionCount) {
-        _showError(
-          'Không thể bốc chính xác số câu do ràng buộc câu hỏi chùm. Hãy thử lại hoặc đổi số lượng câu hỏi!',
-        );
-        return;
-      }
-
-      _showSuccessDialog(finalQuestions);
+      _showSuccessDialog(docs.take(_questionCount).toList(), _questionCount);
     } catch (e) {
       _showError('Lỗi hệ thống: $e');
     }
@@ -132,7 +256,7 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
     }
   }
 
-  void _showSuccessDialog(List<DocumentSnapshot> questions) {
+  void _showSuccessDialog(List<DocumentSnapshot> questions, int count) {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -150,7 +274,7 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
           ],
         ),
         content: Text(
-          'Đã bốc thành công ${questions.length} câu hỏi. Nhấn OK để bắt đầu tính giờ làm bài.',
+          'Đã bốc thành công $count câu hỏi. Nhấn BẮT ĐẦU để tính giờ.',
           style: const TextStyle(fontSize: 15),
         ),
         actions: [
@@ -170,9 +294,15 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
                 MaterialPageRoute(
                   builder: (context) => PracticeScreen(
                     questions: questions,
-                    timeInMinutes: _duration,
-                    subjectName: _selectedPhanThi ?? 'Tổng hợp',
-                    isTab: widget.isTab, // Truyền tiếp flag trạng thái nguồn đi
+                    timeInMinutes: _isLevelMode
+                        ? (count * 1.5).round()
+                        : _duration, // Level mode auto set thời gian = số câu * 1.5p
+                    subjectName:
+                        '$_progressKey ${_isLevelMode ? '(Level $_currentLevel)' : ''}',
+                    isTab: widget.isTab,
+                    isLevelMode: _isLevelMode,
+                    currentLevel: _currentLevel,
+                    progressKey: _progressKey,
                   ),
                 ),
               );
@@ -188,40 +318,35 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _surface,
-      // --- CẤU HÌNH APPBAR XOÁ BỎ HOÀN TOÀN NÚT BACK KHI LÀ TAB ---
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-        automaticallyImplyLeading:
-            false, // Tắt hoàn toàn nút mặc định của hệ thống
-        // Nếu là Tab -> Dùng SizedBox.shrink() để xóa trắng chỗ đó.
-        // Nếu không phải Tab -> Vẽ nút Mũi tên.
+        automaticallyImplyLeading: false,
         leading: widget.isTab
             ? const SizedBox.shrink()
             : IconButton(
                 icon: Icon(Icons.arrow_back, color: _primary),
                 onPressed: () => Navigator.pop(context),
               ),
-
         title: Text(
-          'Luyện tập chuyên đề',
+          'Thiết lập Luyện tập',
           style: TextStyle(
             color: _primary,
             fontWeight: FontWeight.bold,
             fontSize: 18,
           ),
         ),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Container(color: _outline.withValues(alpha: 0.3), height: 1),
-        ),
       ),
       body: Stack(
         children: [
           ListView(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(20),
             children: [
+              // CHỌN CHẾ ĐỘ THI
+              _buildModeSelector(),
+              const SizedBox(height: 24),
+
               _buildSectionTitle('1. Chọn môn học mục tiêu'),
               const SizedBox(height: 16),
               ..._subjects.entries.map(
@@ -233,14 +358,13 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
 
               AnimatedSize(
                 duration: const Duration(milliseconds: 300),
-                curve: Curves.easeInOut,
                 child:
                     _selectedPhanThi != null &&
                         _subjects[_selectedPhanThi]!['subs'].length > 1
                     ? Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const SizedBox(height: 24),
+                          const SizedBox(height: 12),
                           _buildSectionTitle('2. Chọn nội dung ôn tập'),
                           const SizedBox(height: 16),
                           Wrap(
@@ -258,9 +382,13 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
               ),
 
               const SizedBox(height: 32),
-              _buildSectionTitle('3. Cấu hình bài luyện tập'),
-              const SizedBox(height: 16),
-              _buildConfigurationPanel(),
+
+              // HIỂN THỊ CẤU HÌNH DỰA THEO CHẾ ĐỘ
+              if (_isLevelMode)
+                _buildLevelInfoPanel()
+              else
+                _buildConfigurationPanel(),
+
               const SizedBox(height: 100),
             ],
           ),
@@ -295,17 +423,21 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
               ),
               minimumSize: const Size(double.infinity, 54),
             ),
-            child: const Row(
+            child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.play_circle_filled, size: 22),
-                SizedBox(width: 8),
+                Icon(
+                  _isLevelMode ? Icons.rocket_launch : Icons.play_circle_filled,
+                  size: 22,
+                ),
+                const SizedBox(width: 8),
                 Text(
-                  'BẮT ĐẦU LUYỆN TẬP',
-                  style: TextStyle(
+                  _isLevelMode
+                      ? 'VƯỢT ẢI LEVEL $_currentLevel'
+                      : 'BẮT ĐẦU LUYỆN TẬP',
+                  style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    letterSpacing: 0.5,
                   ),
                 ),
               ],
@@ -313,6 +445,167 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  // --- UI COMPONENTS ---
+  Widget _buildModeSelector() {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade200,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: GestureDetector(
+              onTap: () => setState(() => _isLevelMode = true),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: _isLevelMode ? Colors.white : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: _isLevelMode
+                      ? [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 4,
+                          ),
+                        ]
+                      : [],
+                ),
+                child: Center(
+                  child: Text(
+                    '🏆 Vượt ải cấp độ',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: _isLevelMode ? _primary : Colors.grey.shade600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: GestureDetector(
+              onTap: () => setState(() => _isLevelMode = false),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: !_isLevelMode ? Colors.white : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: !_isLevelMode
+                      ? [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 4,
+                          ),
+                        ]
+                      : [],
+                ),
+                child: Center(
+                  child: Text(
+                    '⚙️ Luyện tập tự do',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: !_isLevelMode ? _primary : Colors.grey.shade600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLevelInfoPanel() {
+    int totalQ = LevelConfig.questionCount[_progressKey] ?? 30;
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: _primary.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _primary.withOpacity(0.2)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Tiến trình: $_progressKey',
+                    style: const TextStyle(
+                      color: Colors.grey,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Icon(Icons.star, color: Colors.orange, size: 28),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Level $_currentLevel / 10',
+                        style: TextStyle(
+                          color: _primary,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh, color: Colors.red),
+                tooltip: 'Reset tiến trình',
+                onPressed: _resetProgress,
+              ),
+            ],
+          ),
+          const Divider(height: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildMiniStat('Số câu', '$totalQ câu', Icons.list_alt),
+              _buildMiniStat(
+                'Độ khó',
+                'Chuẩn Lvl $_currentLevel',
+                Icons.bar_chart,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMiniStat(String label, String val, IconData icon) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: Colors.grey),
+        const SizedBox(width: 4),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+            Text(
+              val,
+              style: TextStyle(fontWeight: FontWeight.bold, color: _primary),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -334,6 +627,7 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
         setState(() {
           _selectedPhanThi = title;
           _selectedChuDe = 'Tất cả';
+          _fetchUserProgress(); // Load lại level mỗi khi đổi môn
         });
       },
       borderRadius: BorderRadius.circular(16),
@@ -347,30 +641,10 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
             color: isSelected ? _primary : _outline,
             width: isSelected ? 2 : 1,
           ),
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: _primary.withOpacity(0.1),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-              : [],
         ),
         child: Row(
           children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: isSelected ? _primary : _surfaceContainerLow,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(
-                icon,
-                color: isSelected ? _onPrimary : _primary,
-                size: 24,
-              ),
-            ),
+            Icon(icon, color: isSelected ? _primary : Colors.grey, size: 28),
             const SizedBox(width: 16),
             Expanded(
               child: Text(
@@ -382,10 +656,7 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
                 ),
               ),
             ),
-            if (isSelected)
-              Icon(Icons.check_circle, color: _primary, size: 24)
-            else
-              Icon(Icons.radio_button_unchecked, color: _outline, size: 24),
+            if (isSelected) Icon(Icons.check_circle, color: _primary, size: 24),
           ],
         ),
       ),
@@ -395,7 +666,12 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
   Widget _buildSubTopicChip(String label) {
     bool isSelected = _selectedChuDe == label;
     return InkWell(
-      onTap: () => setState(() => _selectedChuDe = label),
+      onTap: () {
+        setState(() {
+          _selectedChuDe = label;
+          _fetchUserProgress(); // Load lại level mỗi khi đổi chủ đề
+        });
+      },
       borderRadius: BorderRadius.circular(20),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
@@ -426,39 +702,20 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
         border: Border.all(color: _outline.withOpacity(0.3)),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          _buildSectionTitle('3. Cấu hình tự do'),
+          const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Icon(Icons.format_list_numbered, color: _primary, size: 20),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Số lượng câu hỏi',
-                    style: TextStyle(
-                      color: _primary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
+              Text(
+                'Số lượng câu hỏi',
+                style: TextStyle(color: _primary, fontWeight: FontWeight.w600),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: _surfaceContainerLow,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  '$_questionCount câu',
-                  style: TextStyle(
-                    color: _primary,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+              Text(
+                '$_questionCount câu',
+                style: TextStyle(color: _primary, fontWeight: FontWeight.bold),
               ),
             ],
           ),
@@ -468,45 +725,19 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
             max: 60,
             divisions: 5,
             activeColor: _primary,
-            inactiveColor: _surfaceContainerLow,
             onChanged: (val) => setState(() => _questionCount = val.toInt()),
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8),
-            child: Divider(height: 1),
-          ),
+          const Divider(height: 24),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Icon(Icons.timer_outlined, color: _primary, size: 20),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Thời gian làm bài',
-                    style: TextStyle(
-                      color: _primary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
+              Text(
+                'Thời gian làm bài',
+                style: TextStyle(color: _primary, fontWeight: FontWeight.w600),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: _surfaceContainerLow,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  '$_duration phút',
-                  style: TextStyle(
-                    color: _primary,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+              Text(
+                '$_duration phút',
+                style: TextStyle(color: _primary, fontWeight: FontWeight.bold),
               ),
             ],
           ),
@@ -516,7 +747,6 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
             max: 90,
             divisions: 5,
             activeColor: _primary,
-            inactiveColor: _surfaceContainerLow,
             onChanged: (val) => setState(() => _duration = val.toInt()),
           ),
         ],

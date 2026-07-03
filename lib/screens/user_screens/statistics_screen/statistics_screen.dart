@@ -23,6 +23,8 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
   bool _isLoading = true;
   StreamSubscription<DocumentSnapshot>? _userSub;
   StreamSubscription<QuerySnapshot>? _historySub;
+  StreamSubscription<DocumentSnapshot>?
+  _progressSub; // Thêm stream cho Gamification
 
   // --- DỮ LIỆU TỔNG QUAN ---
   int _totalQuestions = 0;
@@ -30,6 +32,9 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
   double _accuracy = 0.0;
   int _targetScore = 900;
   int _currentPredictedScore = 0;
+
+  // --- DỮ LIỆU GAMIFICATION (TIẾN ĐỘ VƯỢT ẢI) ---
+  Map<String, dynamic> _userProgress = {};
 
   // --- DỮ LIỆU SƠ ĐỒ ---
   List<int> _practiceQByWeekday = [0, 0, 0, 0, 0, 0, 0];
@@ -39,10 +44,8 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
   Map<String, int> _dailyActivityMap = {};
 
   // --- DỮ LIỆU HOẠT ĐỘNG ---
-  List<Map<String, dynamic>> _recentActivities =
-      []; // Lưu 3 bài gần nhất hiển thị ở thẻ
-  List<Map<String, dynamic>> _allRecentActivities =
-      []; // Lưu 20 bài gần nhất hiển thị trong popup
+  List<Map<String, dynamic>> _recentActivities = [];
+  List<Map<String, dynamic>> _allRecentActivities = [];
 
   Map<String, double> _sectionSkills = {
     'Ngôn ngữ': 0.0,
@@ -60,6 +63,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
   void dispose() {
     _userSub?.cancel();
     _historySub?.cancel();
+    _progressSub?.cancel();
     super.dispose();
   }
 
@@ -68,6 +72,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
     String? uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
 
+    // 1. Lắng nghe mục tiêu điểm
     _userSub = FirebaseFirestore.instance
         .collection('Users')
         .doc(uid)
@@ -79,6 +84,20 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
           }
         });
 
+    // 2. Lắng nghe Tiến độ Gamification (Vượt ải Level)
+    _progressSub = FirebaseFirestore.instance
+        .collection('UserProgress')
+        .doc(uid)
+        .snapshots()
+        .listen((progDoc) {
+          if (progDoc.exists && progDoc.data() != null && mounted) {
+            setState(() {
+              _userProgress = progDoc.data() as Map<String, dynamic>;
+            });
+          }
+        });
+
+    // 3. Lắng nghe Lịch sử làm bài
     _historySub = FirebaseFirestore.instance
         .collection('ExamHistory')
         .where('userId', isEqualTo: uid)
@@ -100,7 +119,6 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
           List<int> tempPracticeTime = [0, 0, 0, 0, 0, 0, 0];
           List<int> tempExamTime = [0, 0, 0, 0, 0, 0, 0];
           Map<String, int> tempDailyActivityMap = {};
-
           List<Map<String, dynamic>> tempActivities = [];
 
           if (historySnap.docs.isNotEmpty) {
@@ -111,9 +129,14 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
               int c = data['correctAnswers'] ?? 0;
               int secs = data['timeSpentSeconds'] ?? 0;
               String name = (data['examName'] ?? '').toString().toLowerCase();
+
+              bool isLevelMode = data['examId'] == 'level_mode';
               bool isPractice =
+                  isLevelMode ||
                   data['examId'] == 'practice_mode' ||
                   name.contains('luyện tập');
+              int stars = data['stars'] ?? 0;
+              int level = data['level'] ?? 1;
 
               totalQ += q;
               totalC += c;
@@ -138,6 +161,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                     (tempDailyActivityMap[dateKey] ?? 0) + q;
               }
 
+              // Lọc môn học
               if (name.contains('ngôn ngữ') ||
                   name.contains('tiếng') ||
                   name.contains('văn')) {
@@ -157,7 +181,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                 genQ += q;
               }
 
-              // ĐÃ ĐỔI TẠI ĐÂY: Thay vì lấy 3 bài, lấy hẳn 20 bài
+              // Xử lý lưu danh sách hoạt động gần đây
               if (tempActivities.length < 20) {
                 double currentAcc = totalQInExam > 0 ? (c / totalQInExam) : 0.0;
                 int estimatedScore = (currentAcc * 1200).toInt();
@@ -213,6 +237,9 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                   'scoreText': scoreText,
                   'status': status,
                   'color': statusColor,
+                  'isLevelMode': isLevelMode, // Biến cờ Gamification
+                  'stars': stars,
+                  'level': level,
                 });
               }
             }
@@ -225,11 +252,8 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
               _accuracy = totalQ > 0 ? (totalC / totalQ) : 0.0;
               _currentPredictedScore = (_accuracy * 1200).toInt();
 
-              // Phân tách 2 danh sách
               _allRecentActivities = tempActivities;
-              _recentActivities = tempActivities
-                  .take(3)
-                  .toList(); // Chỉ cắt ra 3 bài đẩy ra thẻ ngoài
+              _recentActivities = tempActivities.take(3).toList();
 
               _practiceQByWeekday = tempPracticeQ;
               _examQByWeekday = tempExamQ;
@@ -387,14 +411,11 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                   int pVal = practiceData[index];
                   int eVal = examData[index];
                   int totalVal = pVal + eVal;
-
                   int maxTotal = 0;
                   for (int i = 0; i < 7; i++) {
-                    if (practiceData[i] + examData[i] > maxTotal) {
+                    if (practiceData[i] + examData[i] > maxTotal)
                       maxTotal = practiceData[i] + examData[i];
-                    }
                   }
-
                   double heightRatio = maxTotal == 0
                       ? 0.0
                       : totalVal / maxTotal;
@@ -464,16 +485,13 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
     );
   }
 
-  // --- HÀM MỚI: HIỂN THỊ DANH SÁCH 20 BÀI LÀM GẦN NHẤT ---
   void _showAllRecentActivities() {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (ctx) => Container(
-        height:
-            MediaQuery.of(context).size.height *
-            0.75, // Trượt lên chiếm 75% màn hình
+        height: MediaQuery.of(context).size.height * 0.75,
         padding: const EdgeInsets.only(top: 24, left: 20, right: 20),
         decoration: const BoxDecoration(
           color: Colors.white,
@@ -500,7 +518,6 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
               ],
             ),
             const SizedBox(height: 4),
-            // Cảnh báo người dùng đây là 20 bài gần nhất
             Text(
               'Đây là 20 bài làm gần nhất của bạn.',
               style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
@@ -573,6 +590,10 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                     ),
                     _buildAccuracyCard(),
                     const SizedBox(height: 24),
+
+                    // THẺ TIẾN ĐỘ GAMIFICATION NẰM NGAY TRÊN HOẠT ĐỘNG GẦN ĐÂY
+                    _buildLevelProgressCard(),
+
                     if (_recentActivities.isNotEmpty)
                       _buildRecentActivitySection(),
                     const SizedBox(height: 24),
@@ -587,6 +608,135 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
     );
   }
 
+  // --- THẺ MỚI: TIẾN ĐỘ VƯỢT ẢI GAMIFICATION ---
+  Widget _buildLevelProgressCard() {
+    final List<String> subjects = [
+      'Tiếng Việt',
+      'Tiếng Anh',
+      'Toán học',
+      'Logic',
+      'Suy luận',
+    ];
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _outline.withValues(alpha: 0.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.military_tech, color: Colors.amber.shade700, size: 24),
+              const SizedBox(width: 8),
+              Text(
+                'Tiến độ Vượt ải (Gamification)',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: _primary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            clipBehavior: Clip.none,
+            child: Row(
+              children: subjects.map((sub) {
+                var data = _userProgress[sub];
+                int level = data != null ? (data['level'] ?? 1) : 1;
+                int consecutive = data != null
+                    ? (data['consecutivePasses'] ?? 0)
+                    : 0;
+
+                return Container(
+                  margin: const EdgeInsets.only(right: 12),
+                  padding: const EdgeInsets.all(12),
+                  width: 140,
+                  decoration: BoxDecoration(
+                    color: _bgLight,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: _outline.withValues(alpha: 0.5)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        sub,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: _primary,
+                          fontSize: 13,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: level == 10
+                                  ? Colors.amber.shade100
+                                  : Colors.blue.shade100,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              'Lvl $level',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: level == 10
+                                    ? Colors.amber.shade900
+                                    : Colors.blue.shade900,
+                              ),
+                            ),
+                          ),
+                          const Spacer(),
+                          Icon(
+                            Icons.local_fire_department,
+                            size: 14,
+                            color: Colors.orange.shade700,
+                          ),
+                          Text(
+                            '$consecutive/2',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.orange.shade700,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      LinearProgressIndicator(
+                        value: consecutive / 2,
+                        backgroundColor: Colors.orange.shade100,
+                        color: Colors.orange.shade700,
+                        minHeight: 4,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildStatCard({
     required String title,
     required String value,
@@ -594,7 +744,6 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
     required IconData icon,
     VoidCallback? onTap,
   }) {
-    // ... Giữ nguyên như cũ ...
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -647,7 +796,6 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
   }
 
   Widget _buildHeatmapCard() {
-    // ... Giữ nguyên như cũ ...
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(20),
@@ -690,7 +838,6 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                   );
                   String dateKey =
                       "${targetDay.year}-${targetDay.month}-${targetDay.day}";
-
                   int count = _dailyActivityMap[dateKey] ?? 0;
                   Color boxColor = Colors.grey.shade100;
                   if (count > 0 && count <= 10)
@@ -698,7 +845,6 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                   if (count > 10 && count <= 30)
                     boxColor = const Color(0xFF7BC96F);
                   if (count > 30) boxColor = const Color(0xFF239A3B);
-
                   return Container(
                     margin: const EdgeInsets.only(bottom: 4),
                     width: 14,
@@ -718,7 +864,6 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
   }
 
   Widget _buildAccuracyCard() {
-    // ... Giữ nguyên như cũ ...
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(20),
@@ -768,8 +913,12 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
     );
   }
 
-  // --- COMPONENT TÁCH RỜI ĐỂ TÁI SỬ DỤNG CHO 1 ITEM BÀI LÀM ---
+  // --- CẬP NHẬT CƠ CHẾ HIỂN THỊ ITEM ĐỂ HỖ TRỢ GAMIFICATION ---
   Widget _buildActivityItem(Map<String, dynamic> activity) {
+    bool isLevelMode = activity['isLevelMode'] ?? false;
+    int stars = activity['stars'] ?? 0;
+    int level = activity['level'] ?? 1;
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: Row(
@@ -778,25 +927,57 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: activity['color'].withValues(alpha: 0.15),
+              color: isLevelMode
+                  ? Colors.amber.shade100
+                  : activity['color'].withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(Icons.assignment, color: activity['color'], size: 20),
+            child: Icon(
+              isLevelMode ? Icons.military_tech : Icons.assignment,
+              color: isLevelMode ? Colors.amber.shade700 : activity['color'],
+              size: 20,
+            ),
           ),
           const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  activity['title'],
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: _primary,
-                    fontSize: 14,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        activity['title'],
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: _primary,
+                          fontSize: 14,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (isLevelMode)
+                      Container(
+                        margin: const EdgeInsets.only(left: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade100,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          'Lvl $level',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.amber.shade900,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 4),
                 Text(
@@ -806,6 +987,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
               ],
             ),
           ),
+          const SizedBox(width: 12),
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -818,14 +1000,29 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                 ),
               ),
               const SizedBox(height: 4),
-              Text(
-                activity['status'],
-                style: TextStyle(
-                  fontSize: 11,
-                  color: activity['color'],
-                  fontWeight: FontWeight.w600,
+              // Hiển thị 5 sao nếu là bài vượt ải, ngược lại hiện trạng thái chữ bình thường
+              if (isLevelMode)
+                Row(
+                  children: List.generate(
+                    5,
+                    (index) => Icon(
+                      index < stars
+                          ? Icons.star_rounded
+                          : Icons.star_outline_rounded,
+                      size: 14,
+                      color: Colors.amber.shade600,
+                    ),
+                  ),
+                )
+              else
+                Text(
+                  activity['status'],
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: activity['color'],
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              ),
             ],
           ),
         ],
@@ -844,7 +1041,6 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ĐÃ THÊM: Nút "Xem tất cả >" kế bên tiêu đề
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -857,8 +1053,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                 ),
               ),
               GestureDetector(
-                onTap:
-                    _showAllRecentActivities, // Bấm vào sẽ bật Popup danh sách 20 bài
+                onTap: _showAllRecentActivities,
                 child: const Text(
                   'Xem tất cả >',
                   style: TextStyle(
@@ -871,7 +1066,6 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
             ],
           ),
           const SizedBox(height: 16),
-          // Chỉ lấy danh sách _recentActivities (3 bài) hiển thị ra ngoài
           ..._recentActivities.map((activity) => _buildActivityItem(activity)),
         ],
       ),
@@ -879,7 +1073,6 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
   }
 
   Widget _buildGoalCard() {
-    // ... Giữ nguyên như cũ ...
     double progress = _targetScore > 0
         ? (_currentPredictedScore / _targetScore)
         : 0.0;
@@ -973,7 +1166,6 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
   }
 
   Widget _buildSkillSection(double targetRatio) {
-    // ... Giữ nguyên như cũ ...
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -1006,7 +1198,6 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
   }
 
   Widget _buildSkillBar(String title, double ratio, bool isWarning) {
-    // ... Giữ nguyên như cũ ...
     return Container(
       padding: isWarning ? const EdgeInsets.all(12) : EdgeInsets.zero,
       decoration: isWarning
