@@ -152,6 +152,7 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
   }
 
   // LUỒNG MỚI: BỐC CÂU HỎI THEO LEVEL
+  // LUỒNG MỚI: BỐC CÂU HỎI THEO LEVEL
   Future<void> _startLevelPractice() async {
     setState(() => _isLoading = true);
 
@@ -164,59 +165,120 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
         (totalNeeded *
                 LevelConfig.difficultyRatio[_currentLevel]!['Trung bình']!)
             .round();
-    int hardNeeded =
-        totalNeeded - easyNeeded - medNeeded; // Bù trừ phần dư để tổng luôn đủ
+    int hardNeeded = totalNeeded - easyNeeded - medNeeded;
 
-    try {
-      List<DocumentSnapshot> finalQuestions = [];
+    // --- ĐƯA BIẾN RA PHẠM VI HÀM CHA Ở ĐÂY ---
+    List<DocumentSnapshot> finalQuestions = [];
+    List<String> shortageMessages = [];
 
-      // Hàm helper để bốc theo độ khó
-      Future<void> fetchByDifficulty(
-        String difficulty,
-        int requiredCount,
-      ) async {
-        if (requiredCount <= 0) return;
+    // Hàm helper để bốc theo độ khó
+    Future<void> fetchByDifficulty(String difficulty, int requiredCount) async {
+      if (requiredCount <= 0) return;
 
-        Query query = FirebaseFirestore.instance
-            .collection('Questions')
-            .where('phanThi', isEqualTo: _selectedPhanThi)
-            .where('doKho', isEqualTo: difficulty);
+      Query query = FirebaseFirestore.instance
+          .collection('Questions')
+          .where('phanThi', isEqualTo: _selectedPhanThi);
 
-        if (_selectedChuDe != 'Tất cả') {
-          query = query.where('chuDe', isEqualTo: _selectedChuDe);
-        }
+      if (_selectedChuDe != 'Tất cả') {
+        query = query.where('chuDe', isEqualTo: _selectedChuDe);
+      }
 
-        var snap = await query.get();
-        var docs = snap.docs;
-        docs.shuffle();
+      var snap = await query.get();
 
-        // Xử lý câu hỏi chùm cơ bản
-        int currentCount = 0;
-        for (var doc in docs) {
-          if (currentCount < requiredCount) {
-            finalQuestions.add(doc);
-            currentCount++;
-          }
+      // LỌC: khớp độ khó KHÔNG phân biệt hoa/thường và khoảng trắng thừa
+      // (tránh lỗi lệch chính tả kiểu "Trung Bình" vs "Trung bình" trong Firestore)
+      String normalize(String s) => s.trim().toLowerCase();
+      var availableDocs = snap.docs.where((doc) {
+        var data = doc.data() as Map<String, dynamic>;
+        String doKho = (data['doKho'] ?? '').toString();
+        return normalize(doKho) == normalize(difficulty);
+      }).toList();
+      // GHI CHÚ: KHÔNG lọc theo maDeThi ở đây - luyện tập được phép dùng
+      // mọi câu hỏi trong kho, kể cả câu đã được gán vào một đề thi thử.
+      // Việc loại trừ theo maDeThi chỉ áp dụng khi ADMIN tạo đề thi khác
+      // (tránh 1 câu bị trùng ở 2 đề thi), không áp dụng cho luyện tập.
+
+      // --- DEBUG: xem thực tế Firestore trả về bao nhiêu câu ---
+      debugPrint(
+        '[DEBUG] phanThi=$_selectedPhanThi | chuDe=$_selectedChuDe | doKho=$difficulty '
+        '=> tổng theo phanThi/chuDe: ${snap.docs.length} câu, khớp độ khó: ${availableDocs.length} câu, cần $requiredCount câu',
+      );
+
+      // Tách câu chùm (cụm) và câu lẻ
+      Map<String, List<DocumentSnapshot>> grouped = {};
+      List<DocumentSnapshot> singles = [];
+
+      for (var doc in availableDocs) {
+        var data = doc.data() as Map<String, dynamic>;
+        String maNhom = data['maNhom']?.toString().trim() ?? '';
+        if (maNhom.isNotEmpty) {
+          grouped.putIfAbsent(maNhom, () => []).add(doc);
+        } else {
+          singles.add(doc);
         }
       }
 
-      // 2. Thực thi bốc 3 loại
+      List<List<DocumentSnapshot>> allBlocks = [];
+      allBlocks.addAll(grouped.values);
+      allBlocks.addAll(singles.map((e) => [e]));
+      allBlocks.shuffle();
+
+      // THUẬT TOÁN MỚI - ĐƠN GIẢN & LUÔN ƯU TIÊN ĐỦ SỐ LƯỢNG:
+      // Ưu tiên các block vừa khít trước để hạn chế dư thừa, nhưng nếu
+      // không còn cách nào khác thì CỨ LẤY NGUYÊN CẢ CỤM dù bị lố một ít,
+      // miễn sao đạt đủ requiredCount. Chỉ báo thiếu khi lấy HẾT SẠCH kho
+      // (toàn bộ availableDocs) mà vẫn không đủ.
+      int currentCount = 0;
+
+      // 1. Lấy các block (cụm hoặc câu lẻ) nào vừa khít mà không làm lố, ưu tiên trước
+      List<List<DocumentSnapshot>> remaining = [];
+      for (var block in allBlocks) {
+        if (currentCount + block.length <= requiredCount) {
+          finalQuestions.addAll(block);
+          currentCount += block.length;
+        } else {
+          remaining.add(block);
+        }
+      }
+
+      // 2. Nếu vẫn còn thiếu, LẤY NGUYÊN CỤM còn lại (cho phép lố) cho đến khi đủ
+      remaining.shuffle();
+      for (var block in remaining) {
+        if (currentCount >= requiredCount) break;
+        finalQuestions.addAll(block);
+        currentCount += block.length;
+      }
+
+      // 3. Chỉ báo thiếu khi đã lấy HẾT toàn bộ kho rảnh mà vẫn không đủ
+      if (currentCount < requiredCount) {
+        shortageMessages.add(
+          '• Độ khó "$difficulty": Cần $requiredCount câu, kho rảnh chỉ ghép được tối đa $currentCount câu (có ${availableDocs.length} câu lẻ/cụm khả dụng)',
+        );
+      }
+    }
+
+    try {
+      // 2. Thực thi bốc 3 loại độ khó
       await fetchByDifficulty('Dễ', easyNeeded);
       await fetchByDifficulty('Trung bình', medNeeded);
       await fetchByDifficulty('Khó', hardNeeded);
 
-      setState(() => _isLoading = false);
-
-      if (finalQuestions.length < totalNeeded) {
-        _showError(
-          'Ngân hàng chưa đủ câu hỏi cho cấu hình Level $_currentLevel (Cần $totalNeeded, Đang có ${finalQuestions.length}). Admin cần thêm câu hỏi!',
+      // 3. Xử lý kết quả
+      if (shortageMessages.isNotEmpty) {
+        setState(() => _isLoading = false);
+        _showDetailedShortageDialog(
+          shortageMessages,
+          _currentLevel,
+          _progressKey,
         );
         return;
       }
 
-      finalQuestions.shuffle(); // Xáo trộn lần cuối để không bị Dễ đầu Khó đuôi
-      _showSuccessDialog(finalQuestions, totalNeeded);
+      setState(() => _isLoading = false);
+      finalQuestions.shuffle();
+      _showSuccessDialog(finalQuestions, finalQuestions.length);
     } catch (e) {
+      setState(() => _isLoading = false);
       _showError('Lỗi hệ thống: $e');
     }
   }
@@ -254,6 +316,61 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
         context,
       ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
     }
+  }
+
+  void _showDetailedShortageDialog(
+    List<String> shortageMessages,
+    int currentLevel,
+    String progressKey,
+  ) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(
+              Icons.warning_amber_rounded,
+              color: Colors.orange,
+              size: 28,
+            ),
+            const SizedBox(width: 12),
+            Text(
+              'Kho câu hỏi chưa đủ',
+              style: TextStyle(color: _primary, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Không đủ câu hỏi để tạo đề cho "$progressKey" (Level $currentLevel):',
+              style: const TextStyle(fontSize: 14),
+            ),
+            const SizedBox(height: 12),
+            ...shortageMessages.map(
+              (msg) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(msg, style: const TextStyle(fontSize: 13)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _primary,
+              foregroundColor: _onPrimary,
+            ),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Đã hiểu'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showSuccessDialog(List<DocumentSnapshot> questions, int count) {

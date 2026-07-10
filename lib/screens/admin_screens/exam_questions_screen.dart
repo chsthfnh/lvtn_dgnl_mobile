@@ -121,18 +121,40 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
 
         allBlocks.shuffle();
 
+        // THUẬT TOÁN: ưu tiên ghép các block vừa khít trước (giữ nguyên cụm).
+        // Nếu ghép xong vẫn chưa đủ, lấy tiếp từ các block còn lại; nếu block
+        // đó lớn hơn số còn thiếu thì CẮT BỚT đúng bằng số còn thiếu (chấp
+        // nhận tách cụm ở bước cuối) để tổng luôn khớp CHÍNH XÁC requiredCount.
         int currentCount = 0;
         List<DocumentSnapshot> categoryDocs = [];
+        List<List<DocumentSnapshot>> remainingBlocks = [];
 
         for (var block in allBlocks) {
           if (currentCount + block.length <= requiredCount) {
             categoryDocs.addAll(block);
             currentCount += block.length;
+          } else {
+            remainingBlocks.add(block);
           }
-          if (currentCount == requiredCount) break;
         }
 
-        // 2. NẾU BỐC XONG MÀ VẪN THIẾU -> GHI LẠI LỖI
+        if (currentCount < requiredCount) {
+          remainingBlocks.shuffle();
+          for (var block in remainingBlocks) {
+            if (currentCount >= requiredCount) break;
+            int need = requiredCount - currentCount;
+            if (block.length <= need) {
+              categoryDocs.addAll(block);
+              currentCount += block.length;
+            } else {
+              // Cắt bớt cụm để lấy đúng đủ số còn thiếu
+              categoryDocs.addAll(block.sublist(0, need));
+              currentCount += need;
+            }
+          }
+        }
+
+        // 2. NẾU ĐÃ LẤY HẾT TOÀN BỘ KHO RẢNH MÀ VẪN THIẾU -> GHI LỖI
         if (currentCount < requiredCount) {
           shortageMessages.add(
             '• ${entry.key}: Thiếu ${requiredCount - currentCount} câu (Chỉ có sẵn $currentCount câu)',

@@ -18,6 +18,7 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
   String _searchText = '';
   String _selectedPhanThi = 'Tất cả';
   String _selectedChuDe = 'Tất cả';
+  String _selectedDoKho = 'Tất cả'; // MỚI: Biến lưu trữ độ khó đang lọc
 
   // --- BIẾN CHỨC NĂNG CHỌN NHIỀU ---
   bool _isSelectionMode = false;
@@ -29,6 +30,9 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
     'Toán học': ['Tất cả'],
     'Tư duy khoa học': ['Tất cả', 'Logic', 'Suy luận'],
   };
+
+  // MỚI: Danh sách các mức độ khó để hiển thị ở Dropdown
+  final List<String> _doKhoList = ['Tất cả', 'Dễ', 'Trung bình', 'Khó'];
 
   void _onFilterChanged() {
     setState(() {
@@ -128,7 +132,6 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
           ),
           ElevatedButton(
             onPressed: () async {
-              // Cập nhật tất cả các câu hỏi cùng mã nhóm
               var batch = FirebaseFirestore.instance.batch();
               var docs = await FirebaseFirestore.instance
                   .collection('Questions')
@@ -163,6 +166,8 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
     if (_selectedPhanThi != 'Tất cả')
       warningFilter += ' thuộc $_selectedPhanThi';
     if (_selectedChuDe != 'Tất cả') warningFilter += ' - $_selectedChuDe';
+    if (_selectedDoKho != 'Tất cả')
+      warningFilter += ' (Độ khó: $_selectedDoKho)';
 
     bool confirm = await _showConfirmDialog(
       'CẢNH BÁO: XÓA TOÀN BỘ MỤC NÀY',
@@ -299,6 +304,7 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
             String cDe = data['chuDe']?.toString() ?? '';
             String nDungChung =
                 data['noiDungChung']?.toString().toLowerCase() ?? '';
+            String dKho = data['doKho']?.toString() ?? ''; // MỚI: Đọc độ khó
 
             if (_searchText.isNotEmpty &&
                 !qText.contains(_searchText.toLowerCase()) &&
@@ -310,6 +316,11 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
             if (_selectedChuDe != 'Tất cả' &&
                 !cDe.toLowerCase().contains(_selectedChuDe.toLowerCase()))
               return false;
+
+            // MỚI: Lọc theo độ khó
+            if (_selectedDoKho != 'Tất cả' && dKho != _selectedDoKho)
+              return false;
+
             return true;
           }).toList();
         }
@@ -429,6 +440,30 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
                             items: _filterMap[_selectedPhanThi]!,
                             onChanged: (v) {
                               _selectedChuDe = v!;
+                              _onFilterChanged();
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    // MỚI: Thêm hàng lọc theo Độ Khó
+                    Row(
+                      children: [
+                        const Text(
+                          'Độ khó:',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _buildDropdown(
+                            value: _selectedDoKho,
+                            items: _doKhoList,
+                            onChanged: (v) {
+                              _selectedDoKho = v!;
                               _onFilterChanged();
                             },
                           ),
@@ -830,7 +865,6 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Dùng _buildMathText cho cả Nội dung chung để lỡ có toán học
                 if (noiDungChung.isNotEmpty)
                   _buildMathText(
                     noiDungChung,
