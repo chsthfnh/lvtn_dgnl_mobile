@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'auth/auth_wrapper.dart';
+import '/screens/globals.dart';
+import 'screens/user_screens/ai_tutor_widget.dart';
+import 'screens/user_screens/dashboard_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,10 +20,35 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'Hệ Thống ĐGNL',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(primarySwatch: Colors.blue),
+      // CHỈ GIỮ LẠI DUY NHẤT 1 DÒNG HOME NÀY ĐỂ CHECK ĐĂNG NHẬP:
       home: const AuthWrapper(),
+      builder: (context, child) {
+        return ValueListenableBuilder<bool>(
+          valueListenable: aiTutorNotifier,
+          builder: (context, isEnabled, _) {
+            return Stack(
+              children: [
+                if (child != null) child,
+
+                if (isEnabled)
+                  ValueListenableBuilder<String>(
+                    valueListenable: currentScreenNotifier,
+                    builder: (context, screenName, _) {
+                      return DraggableAITutorWidget(
+                        currentScreen: screenName,
+                        onClose: () => aiTutorNotifier.value = false,
+                      );
+                    },
+                  ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }

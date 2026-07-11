@@ -27,8 +27,11 @@ class _ImportImagesScreenState extends State<ImportImagesScreen> {
   Future<void> _pickImages() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.image,
-        allowMultiple: true, // Cho phép chọn nhiều ảnh cùng lúc
+        // SỬA Ở ĐÂY: Chuyển từ FileType.image sang FileType.custom
+        type: FileType.custom,
+        // Bắt buộc chỉ định các đuôi file được phép chọn
+        allowedExtensions: ['png', 'jpg', 'jpeg'],
+        allowMultiple: true,
       );
 
       if (result != null) {
@@ -39,6 +42,7 @@ class _ImportImagesScreenState extends State<ImportImagesScreen> {
           // Tạo UI hiển thị các ảnh đang chờ
           for (var file in _pendingImages) {
             _uploadResults.add({
+              // Lúc này file.name sẽ giữ nguyên 100% tên gốc (VD: cau_1.png)
               'fileName': file.name,
               'status': 'ready',
               'subtitle':
