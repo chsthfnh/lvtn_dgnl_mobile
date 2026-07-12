@@ -1,9 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
-import '../../services/ai_tutor_service.dart';
-import '../globals.dart';
+import '../../../services/ai_tutor_service.dart';
+// Đảm bảo đường dẫn tới globals.dart của bạn là chính xác
+import '../../globals.dart';
 
-// WIDGET BONG BÓNG CHAT KÉO THẢ ĐƯỢC
+// =========================================================
+// 1. WIDGET BONG BÓNG CHAT KÉO THẢ ĐƯỢC
+// =========================================================
 class DraggableAITutorWidget extends StatefulWidget {
   final String currentScreen;
   final VoidCallback onClose;
@@ -23,21 +27,63 @@ class _DraggableAITutorWidgetState extends State<DraggableAITutorWidget>
   Offset _position = const Offset(20, 100);
   bool _isDragging = false;
   bool _isOverCloseTarget = false;
-  late AITutorService _aiService;
+  bool _isIdle = false;
+  Timer? _idleTimer;
 
   final double _bubbleSize = 64.0;
   final double _closeTargetSize = 70.0;
+  late AITutorService _aiService;
 
   @override
   void initState() {
     super.initState();
     _aiService = AITutorService();
-    // Vị trí mặc định ban đầu: Góc dưới bên phải
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final size = MediaQuery.of(context).size;
       setState(() {
-        _position = Offset(size.width - _bubbleSize - 16, size.height - 200);
+        _position = Offset(size.width - _bubbleSize - 8, size.height - 200);
       });
+      _startIdleTimer();
+    });
+  }
+
+  @override
+  void dispose() {
+    _idleTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startIdleTimer() {
+    _idleTimer?.cancel();
+    _idleTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() => _isIdle = true);
+        _snapToEdge(isIdleExtraSnap: true);
+      }
+    });
+  }
+
+  void _snapToEdge({bool isIdleExtraSnap = false}) {
+    final size = MediaQuery.of(context).size;
+    final isLeft = _position.dx + (_bubbleSize / 2) < size.width / 2;
+    final double edgeMargin = isIdleExtraSnap ? -15.0 : 8.0;
+
+    setState(() {
+      _position = Offset(
+        isLeft ? edgeMargin : size.width - _bubbleSize - edgeMargin,
+        _position.dy,
+      );
+    });
+  }
+
+  void _onPanDown(DragDownDetails details) {
+    _idleTimer?.cancel();
+    setState(() {
+      _isIdle = false;
+      if (_position.dx < 0 ||
+          _position.dx > MediaQuery.of(context).size.width - _bubbleSize) {
+        _snapToEdge(isIdleExtraSnap: false);
+      }
     });
   }
 
@@ -49,16 +95,14 @@ class _DraggableAITutorWidgetState extends State<DraggableAITutorWidget>
     final size = MediaQuery.of(context).size;
     setState(() {
       _position += details.delta;
-      // Khóa không cho bong bóng văng ra ngoài màn hình
       _position = Offset(
         _position.dx.clamp(0.0, size.width - _bubbleSize),
         _position.dy.clamp(0.0, size.height - _bubbleSize),
       );
 
-      // Tính toán vùng va chạm với nút X đỏ
       final closeTargetRect = Rect.fromLTWH(
         (size.width - _closeTargetSize) / 2,
-        size.height - 140, // Vị trí nút X ở dưới đáy
+        size.height - 140,
         _closeTargetSize,
         _closeTargetSize,
       );
@@ -68,32 +112,24 @@ class _DraggableAITutorWidgetState extends State<DraggableAITutorWidget>
         _bubbleSize,
         _bubbleSize,
       );
-
       _isOverCloseTarget = closeTargetRect.overlaps(bubbleRect);
     });
   }
 
   void _onPanEnd(DragEndDetails details) {
     setState(() => _isDragging = false);
-
-    // Kéo vào X -> Gọi hàm tắt AI
     if (_isOverCloseTarget) {
       widget.onClose();
       return;
     }
-
-    // Hiệu ứng hít vào 2 cạnh màn hình
-    final size = MediaQuery.of(context).size;
-    final isLeft = _position.dx < size.width / 2;
-    setState(() {
-      _position = Offset(
-        isLeft ? 8.0 : size.width - _bubbleSize - 8.0,
-        _position.dy,
-      );
-    });
+    _snapToEdge(isIdleExtraSnap: false);
+    _startIdleTimer();
   }
 
   void _openChatBottomSheet() {
+    _idleTimer?.cancel();
+    setState(() => _isIdle = false);
+
     final validContext = navigatorKey.currentContext;
     if (validContext == null) return;
 
@@ -105,7 +141,7 @@ class _DraggableAITutorWidgetState extends State<DraggableAITutorWidget>
         aiService: _aiService,
         currentScreen: widget.currentScreen,
       ),
-    );
+    ).then((_) => _startIdleTimer());
   }
 
   @override
@@ -114,64 +150,75 @@ class _DraggableAITutorWidgetState extends State<DraggableAITutorWidget>
 
     return Stack(
       children: [
-        // 1. NÚT X (VÙNG ĐỂ TẮT AI) - CHỈ HIỆN KHI ĐANG KÉO BONG BÓNG
         if (_isDragging)
           Positioned(
             bottom: 70,
             left: (size.width - _closeTargetSize) / 2,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOutBack,
               width: _isOverCloseTarget
-                  ? _closeTargetSize + 10
+                  ? _closeTargetSize + 15
                   : _closeTargetSize,
               height: _isOverCloseTarget
-                  ? _closeTargetSize + 10
+                  ? _closeTargetSize + 15
                   : _closeTargetSize,
               decoration: BoxDecoration(
                 color: _isOverCloseTarget
                     ? Colors.red
-                    : Colors.black.withOpacity(0.4),
+                    : Colors.black.withOpacity(0.5),
                 shape: BoxShape.circle,
               ),
               child: Center(
                 child: Icon(
                   Icons.close,
                   color: Colors.white,
-                  size: _isOverCloseTarget ? 40 : 28,
+                  size: _isOverCloseTarget ? 36 : 28,
                 ),
               ),
             ),
           ),
 
-        // 2. BONG BÓNG CHAT AI NỔI
-        Positioned(
+        AnimatedPositioned(
+          duration: _isDragging
+              ? Duration.zero
+              : const Duration(milliseconds: 400),
+          curve: _isDragging ? Curves.linear : Curves.easeOutBack,
           left: _position.dx,
           top: _position.dy,
           child: GestureDetector(
+            onPanDown: _onPanDown,
             onPanStart: _onPanStart,
             onPanUpdate: _onPanUpdate,
             onPanEnd: _onPanEnd,
             onTap: _openChatBottomSheet,
-            child: AnimatedContainer(
-              // Tắt animation khi đang kéo để không bị giật, bật lại khi hít cạnh
-              duration: _isDragging
-                  ? Duration.zero
-                  : const Duration(milliseconds: 250),
-              curve: Curves.easeOutBack,
-              width: _bubbleSize,
-              height: _bubbleSize,
-              decoration: BoxDecoration(
-                color: Colors.blue.shade600,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.blue.withOpacity(0.4),
-                    blurRadius: 12,
-                    offset: const Offset(0, 6),
+            child: AnimatedScale(
+              duration: const Duration(milliseconds: 300),
+              scale: _isIdle ? 0.85 : (_isDragging ? 1.05 : 1.0),
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 300),
+                opacity: _isIdle ? 0.6 : 1.0,
+                child: Container(
+                  width: _bubbleSize,
+                  height: _bubbleSize,
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade600,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blue.withOpacity(_isIdle ? 0.0 : 0.4),
+                        blurRadius: 12,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
                   ),
-                ],
+                  child: const Icon(
+                    Icons.smart_toy,
+                    color: Colors.white,
+                    size: 32,
+                  ),
+                ),
               ),
-              child: const Icon(Icons.smart_toy, color: Colors.white, size: 32),
             ),
           ),
         ),
@@ -181,7 +228,8 @@ class _DraggableAITutorWidgetState extends State<DraggableAITutorWidget>
 }
 
 // =========================================================
-// GIAO DIỆN CHAT BÊN TRONG BONG BÓNG (Nằm dưới màn hình đẩy lên)
+// 2. GIAO DIỆN CHAT BÊN TRONG BONG BÓNG
+// =========================================================
 class _ChatInterface extends StatefulWidget {
   final AITutorService aiService;
   final String currentScreen;
@@ -255,7 +303,6 @@ class _ChatInterfaceState extends State<_ChatInterface> {
       ),
       child: Column(
         children: [
-          // Header
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
             decoration: const BoxDecoration(
@@ -299,7 +346,6 @@ class _ChatInterfaceState extends State<_ChatInterface> {
             ),
           ),
 
-          // Danh sách tin nhắn
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
@@ -328,7 +374,6 @@ class _ChatInterfaceState extends State<_ChatInterface> {
               ),
             ),
 
-          // Ô nhập liệu
           Container(
             padding: EdgeInsets.only(
               left: 16,
@@ -346,7 +391,7 @@ class _ChatInterfaceState extends State<_ChatInterface> {
                   child: TextField(
                     controller: _textCtrl,
                     decoration: InputDecoration(
-                      hintText: 'Nhập câu hỏi hoặc yêu cầu...',
+                      hintText: 'Nhập câu hỏi...',
                       hintStyle: TextStyle(color: Colors.grey.shade400),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(24),

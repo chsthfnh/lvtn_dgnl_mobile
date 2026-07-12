@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import '../ai_screens/ai_explain_widget.dart';
 
 class DetailedAnswerScreen extends StatelessWidget {
   final List<DocumentSnapshot> questions;
@@ -178,44 +179,33 @@ class DetailedAnswerScreen extends StatelessWidget {
                   }),
                 ),
 
-                // LỜI GIẢI CHI TIẾT
-                const Divider(height: 32),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(8),
+                // ĐÂY LÀ PHẦN THÊM MỚI: RÁP NÚT AI TUTOR VÀO NẾU LÀM SAI
+                if (!isCorrect) ...[
+                  const SizedBox(height: 16),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: AITutorExplainButton(
+                      // Truyền nội dung câu hỏi
+                      questionContent: data['noiDungCauHoi'] ?? '',
+
+                      // Trích xuất đáp án đúng dạng Text (thay vì index)
+                      correctAnswer:
+                          options.isNotEmpty &&
+                              correctIdx >= 0 &&
+                              correctIdx < options.length
+                          ? options[correctIdx].toString()
+                          : 'Chưa cập nhật',
+
+                      // Trích xuất đáp án người dùng dạng Text
+                      userAnswer:
+                          userAnsIdx != null &&
+                              userAnsIdx >= 0 &&
+                              userAnsIdx < options.length
+                          ? options[userAnsIdx].toString()
+                          : 'Bạn chưa chọn đáp án',
+                    ),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.lightbulb, size: 16, color: _primary),
-                          const SizedBox(width: 4),
-                          Text(
-                            'Lời giải chi tiết:',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: _primary,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      _buildMathText(
-                        data['loiGiai'] ??
-                            'Chưa có giải thích cho câu hỏi này.',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Colors.black87,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                ],
               ],
             ),
           );

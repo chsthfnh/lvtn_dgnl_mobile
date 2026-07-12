@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'detailed_answer_screen.dart';
 import '../dashboard_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../ai_screens/ai_mistake_summary_widget.dart'; // Đổi lại đường dẫn cho đúng nha
 
 class PracticeResultScreen extends StatelessWidget {
   final int totalQuestions;
@@ -384,6 +385,12 @@ class PracticeResultScreen extends StatelessWidget {
               fontWeight: FontWeight.w600,
             ),
           ),
+          // Nếu làm sai từ 1 câu trở lên thì mới cần AI phân tích
+          if (correctAnswers < totalQuestions)
+            AIMistakeSummaryButton(
+              questions: questions,
+              userAnswers: userAnswers,
+            ),
         ],
       ),
     );

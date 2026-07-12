@@ -3,8 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'auth/auth_wrapper.dart';
 import '/screens/globals.dart';
-import 'screens/user_screens/ai_tutor_widget.dart';
-import 'screens/user_screens/dashboard_screen.dart';
+import 'screens/user_screens/ai_screens/ai_tutor_widget.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -38,10 +37,12 @@ class MyApp extends StatelessWidget {
                   ValueListenableBuilder<String>(
                     valueListenable: currentScreenNotifier,
                     builder: (context, screenName, _) {
+                      // TRẢ LẠI ĐÚNG CÁI BONG BÓNG CHAT Ở ĐÂY NÈ:
                       return DraggableAITutorWidget(
                         currentScreen: screenName,
                         onClose: () => aiTutorNotifier.value = false,
                       );
+                      // TUYỆT ĐỐI KHÔNG DÙNG AITutorExplainButton Ở ĐÂY NHA!
                     },
                   ),
               ],

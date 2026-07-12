@@ -7,7 +7,6 @@ import 'profile_screens/profile_screen.dart';
 import 'mock_exam_screens/exam_detail_screen.dart';
 import 'statistics_screen/statistics_screen.dart';
 import 'dart:async';
-import 'ai_tutor_widget.dart';
 import '../globals.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -19,7 +18,6 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
   String _fullName = 'Học viên';
-  bool _isAITutorEnabled = false;
 
   // Biến lưu trữ tiến độ thực tế
   double _overallProgress = 0.0;
@@ -328,168 +326,148 @@ class _DashboardScreenState extends State<DashboardScreen> {
       const ProfileScreen(),
     ];
 
-    return Stack(
-      children: [
-        Scaffold(
-          backgroundColor: Colors.white,
-          appBar:
-              (_selectedIndex == 1 ||
-                  _selectedIndex == 2 ||
-                  _selectedIndex == 3)
-              ? null
-              : AppBar(
-                  backgroundColor: Colors.white,
-                  elevation: 0,
-                  scrolledUnderElevation: 0,
-                  title: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(6),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(
-                          Icons.school,
-                          color: Color(0xFF002045),
-                          size: 24,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Text(
-                        'EduTest ĐGNL',
-                        style: TextStyle(
-                          color: Color(0xFF002045),
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar:
+          (_selectedIndex == 1 || _selectedIndex == 2 || _selectedIndex == 3)
+          ? null
+          : AppBar(
+              backgroundColor: Colors.white,
+              elevation: 0,
+              scrolledUnderElevation: 0,
+              title: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(
+                      Icons.school,
+                      color: Color(0xFF002045),
+                      size: 24,
+                    ),
                   ),
-                  // THAY THẾ ĐOẠN ĐẾM CHẤM ĐỎ CŨ BẰNG ĐOẠN NÀY:
-                  actions: [
-                    StreamBuilder<QuerySnapshot>(
-                      stream: FirebaseFirestore.instance
-                          .collection('Notifications')
-                          .snapshots(),
-                      builder: (context, snapshot) {
-                        bool hasUnread = false;
+                  const SizedBox(width: 12),
+                  const Text(
+                    'EduTest ĐGNL',
+                    style: TextStyle(
+                      color: Color(0xFF002045),
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              // THAY THẾ ĐOẠN ĐẾM CHẤM ĐỎ CŨ BẰNG ĐOẠN NÀY:
+              actions: [
+                StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('Notifications')
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    bool hasUnread = false;
 
-                        if (snapshot.hasData) {
-                          String uid = FirebaseAuth.instance.currentUser!.uid;
-                          for (var doc in snapshot.data!.docs) {
-                            var data = doc.data() as Map<String, dynamic>;
+                    if (snapshot.hasData) {
+                      String uid = FirebaseAuth.instance.currentUser!.uid;
+                      for (var doc in snapshot.data!.docs) {
+                        var data = doc.data() as Map<String, dynamic>;
 
-                            // Nếu user đã vuốt xóa thông báo này rồi -> Bỏ qua
-                            List deletedBy = data['deletedBy'] ?? [];
-                            if (deletedBy.contains(uid)) continue;
+                        // Nếu user đã vuốt xóa thông báo này rồi -> Bỏ qua
+                        List deletedBy = data['deletedBy'] ?? [];
+                        if (deletedBy.contains(uid)) continue;
 
-                            // Nếu chưa xóa, check xem đã đọc chưa
-                            List readBy = data['readBy'] ?? [];
-                            if (!readBy.contains(uid)) {
-                              hasUnread = true;
-                              break;
-                            }
-                          }
+                        // Nếu chưa xóa, check xem đã đọc chưa
+                        List readBy = data['readBy'] ?? [];
+                        if (!readBy.contains(uid)) {
+                          hasUnread = true;
+                          break;
                         }
+                      }
+                    }
 
-                        return Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            IconButton(
-                              icon: const Icon(
-                                Icons.notifications_none_outlined,
-                                color: Color(0xFF002045),
-                                size: 28,
-                              ),
-                              onPressed: _showNotificationPopup,
-                            ),
-                            if (hasUnread)
-                              Positioned(
-                                top: 12,
-                                right: 12,
-                                child: Container(
-                                  width: 10,
-                                  height: 10,
-                                  decoration: BoxDecoration(
-                                    color: Colors.red,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: Colors.white,
-                                      width: 1.5,
-                                    ),
-                                  ),
+                    return Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        IconButton(
+                          icon: const Icon(
+                            Icons.notifications_none_outlined,
+                            color: Color(0xFF002045),
+                            size: 28,
+                          ),
+                          onPressed: _showNotificationPopup,
+                        ),
+                        if (hasUnread)
+                          Positioned(
+                            top: 12,
+                            right: 12,
+                            child: Container(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                color: Colors.red,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Colors.white,
+                                  width: 1.5,
                                 ),
                               ),
-                          ],
-                        );
-                      },
-                    ),
-                    const SizedBox(width: 8),
-                  ],
+                            ),
+                          ),
+                      ],
+                    );
+                  },
                 ),
-          body: pages[_selectedIndex],
-          bottomNavigationBar: NavigationBarTheme(
-            data: NavigationBarThemeData(
-              indicatorColor: Colors.greenAccent.withValues(alpha: 0.3),
-              labelTextStyle: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.selected)) {
-                  return const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  );
-                }
-                return const TextStyle(fontSize: 12, color: Colors.grey);
-              }),
-            ),
-            child: NavigationBar(
-              selectedIndex: _selectedIndex,
-              onDestinationSelected: (index) {
-                setState(() => _selectedIndex = index);
-                updatePresence('idle');
-              },
-              backgroundColor: Colors.white,
-              destinations: const [
-                NavigationDestination(
-                  icon: Icon(Icons.home_outlined),
-                  selectedIcon: Icon(Icons.home, color: Colors.green),
-                  label: 'Trang chủ',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.edit_note_outlined),
-                  selectedIcon: Icon(Icons.edit_note, color: Color(0xFF002045)),
-                  label: 'Luyện tập',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.show_chart_outlined),
-                  selectedIcon: Icon(
-                    Icons.show_chart,
-                    color: Color(0xFF002045),
-                  ),
-                  label: 'Thống kê',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.person_outline),
-                  selectedIcon: Icon(Icons.person, color: Color(0xFF002045)),
-                  label: 'Hồ sơ',
-                ),
+                const SizedBox(width: 8),
               ],
             ),
-          ),
+      body: pages[_selectedIndex],
+      bottomNavigationBar: NavigationBarTheme(
+        data: NavigationBarThemeData(
+          indicatorColor: Colors.greenAccent.withValues(alpha: 0.3),
+          labelTextStyle: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
+              return const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              );
+            }
+            return const TextStyle(fontSize: 12, color: Colors.grey);
+          }),
         ),
-        if (_isAITutorEnabled)
-          DraggableAITutorWidget(
-            currentScreen: _selectedIndex == 0
-                ? 'Dashboard'
-                : (_selectedIndex == 1
-                      ? 'Luyện tập'
-                      : (_selectedIndex == 2 ? 'Thống kê' : 'Hồ sơ')),
-            onClose: () => setState(
-              () => _isAITutorEnabled = false,
-            ), // Callback khi kéo vào X
-          ),
-      ],
+        child: NavigationBar(
+          selectedIndex: _selectedIndex,
+          onDestinationSelected: (index) {
+            setState(() => _selectedIndex = index);
+            updatePresence('idle');
+          },
+          backgroundColor: Colors.white,
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.home_outlined),
+              selectedIcon: Icon(Icons.home, color: Colors.green),
+              label: 'Trang chủ',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.edit_note_outlined),
+              selectedIcon: Icon(Icons.edit_note, color: Color(0xFF002045)),
+              label: 'Luyện tập',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.show_chart_outlined),
+              selectedIcon: Icon(Icons.show_chart, color: Color(0xFF002045)),
+              label: 'Thống kê',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.person_outline),
+              selectedIcon: Icon(Icons.person, color: Color(0xFF002045)),
+              label: 'Hồ sơ',
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -573,12 +551,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       isEnabled ? Colors.white : const Color(0xFFE65100),
                       isEnabled ? Colors.white : const Color(0xFFE65100),
                       () {
-                        // KHI BẤM NÚT -> ĐẢO TRẠNG THÁI TOÀN CỤC
+                        // KHI BẤM NÚT, CHỈ CẦN ĐẢO NGƯỢC BIẾN TOÀN CỤC NÀY
                         aiTutorNotifier.value = !isEnabled;
                       },
                       borderColor: isEnabled
                           ? Colors.transparent
-                          : Colors.grey.withOpacity(0.2),
+                          : Colors.grey.withValues(alpha: 0.2),
                     );
                   },
                 ),
