@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
@@ -32,7 +31,6 @@ class _AIOcrScannerSheetState extends State<AIOcrScannerSheet> {
   bool _isProcessingImage = false;
   bool _isWaitingForAI = false;
   String _aiResponse = '';
-  File? _selectedImage;
 
   @override
   void dispose() {
@@ -46,7 +44,6 @@ class _AIOcrScannerSheetState extends State<AIOcrScannerSheet> {
     if (pickedFile == null) return;
 
     setState(() {
-      _selectedImage = File(pickedFile.path);
       _isProcessingImage = true;
       _aiResponse = ''; // Xóa kết quả cũ nếu có
     });

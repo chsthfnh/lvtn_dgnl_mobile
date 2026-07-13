@@ -20,7 +20,6 @@ class _ExamDetailScreenState extends State<ExamDetailScreen> {
   // --- BẢNG MÀU DESIGN SYSTEM ---
   final Color _primary = const Color(0xFF002045);
   final Color _bgLight = const Color(0xFFF8F9FF);
-  final Color _surfaceLow = const Color(0xFFEFF4FF);
   final Color _outline = const Color(0xFFC4C6CF);
 
   // Hàm xử lý tải đề
