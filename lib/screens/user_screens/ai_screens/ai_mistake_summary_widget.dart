@@ -4,7 +4,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import '../../../services/ai_tutor_service.dart'; // Đổi đường dẫn nếu cần
 
 class AIMistakeSummaryButton extends StatelessWidget {
-  final List<DocumentSnapshot> questions;
+  final List<dynamic> questions;
   final Map<int, int> userAnswers;
 
   const AIMistakeSummaryButton({
@@ -21,7 +21,10 @@ class AIMistakeSummaryButton extends StatelessWidget {
     for (int i = 0; i < questions.length; i++) {
       if (count >= 15) break; // Giới hạn số lượng
 
-      var data = questions[i].data() as Map<String, dynamic>;
+      var question = questions[i];
+      Map<String, dynamic> data = question is DocumentSnapshot
+          ? question.data() as Map<String, dynamic>
+          : question as Map<String, dynamic>;
       String correctLetter = data['correctAnswer']?.toString().trim() ?? 'A';
       if (correctLetter.isEmpty) correctLetter = 'A';
       int correctIdx = correctLetter.codeUnitAt(0) - 65;

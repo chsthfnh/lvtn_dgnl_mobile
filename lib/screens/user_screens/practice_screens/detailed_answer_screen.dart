@@ -5,7 +5,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import '../ai_screens/ai_explain_widget.dart';
 
 class DetailedAnswerScreen extends StatelessWidget {
-  final List<DocumentSnapshot> questions;
+  final List<dynamic> questions;
   final Map<int, int> userAnswers;
 
   const DetailedAnswerScreen({
@@ -42,7 +42,10 @@ class DetailedAnswerScreen extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         itemCount: questions.length,
         itemBuilder: (context, index) {
-          var data = questions[index].data() as Map<String, dynamic>;
+          var question = questions[index];
+          Map<String, dynamic> data = question is DocumentSnapshot
+              ? question.data() as Map<String, dynamic>
+              : question as Map<String, dynamic>;
           int? userAnsIdx = userAnswers[index];
 
           // Lớp khiên 1: Xử lý an toàn nếu không có đáp án đúng

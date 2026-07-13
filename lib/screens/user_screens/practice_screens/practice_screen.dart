@@ -145,6 +145,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
     // 1. Chấm điểm
     for (int i = 0; i < widget.questions.length; i++) {
       var data = widget.questions[i].data() as Map<String, dynamic>;
+
       String correctAnsLetter = data['correctAnswer'] ?? 'A';
       int? userAnsIndex = _userAnswers[i];
 
@@ -258,6 +259,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
 
     var currentData =
         widget.questions[_currentIndex].data() as Map<String, dynamic>;
+
     String qText = currentData['noiDungCauHoi'] ?? '';
     List<dynamic> options = currentData['options'] ?? [];
     String noiDungChung = currentData['noiDungChung'] ?? '';

@@ -223,4 +223,93 @@ class AITutorService {
       return 'Lỗi kết nối đến máy chủ AI. Vui lòng kiểm tra mạng.';
     }
   }
+
+  // 1. AI GỢI Ý HỌC HÔM NAY (Daily Recommendation)
+  Future<String> getDailyRecommendation({
+    required double ngonNguRate,
+    required double toanHocRate,
+    required double logicRate,
+  }) async {
+    try {
+      String prompt =
+          '''
+        Bạn là Gia sư AI khích lệ học tập. Dựa vào tỷ lệ hoàn thành mục tiêu của học viên hôm nay:
+        - Ngôn ngữ: ${(ngonNguRate * 100).toInt()}%
+        - Toán học: ${(toanHocRate * 100).toInt()}%
+        - Logic/Phân tích: ${(logicRate * 100).toInt()}%
+
+        Hãy viết 1 đoạn văn thật ngắn gọn (tối đa 3 câu), xưng "Mình" gọi "Bạn", dùng giọng điệu năng động, thân thiện. 
+        Nhiệm vụ: Khen ngợi nhẹ nhàng môn điểm cao, và gợi ý cụ thể hôm nay nên ưu tiên luyện tập môn nào đang có điểm thấp nhất để cân bằng năng lực.
+        ''';
+      final response = await _chatSession.sendMessage(Content.text(prompt));
+      return response.text ??
+          'Hôm nay là một ngày tuyệt vời để luyện tập! Hãy bắt đầu với môn học bạn thích nhất nhé.';
+    } catch (e) {
+      return 'Hãy giữ vững phong độ và hoàn thành bài luyện tập ĐGNL hôm nay nhé!';
+    }
+  }
+
+  // 2. AI PHÂN TÍCH HỌC LỰC DÀI HẠN (Performance Analysis)
+  Future<String> analyzePerformance({required String historyStatsText}) async {
+    try {
+      String prompt =
+          '''
+          Bạn là Chuyên gia Đánh giá Năng lực (ĐGNL). Dưới đây là tóm tắt lịch sử thi của học viên:
+          $historyStatsText
+
+          Hãy viết một báo cáo đánh giá chuyên sâu nhưng THẬT NGẮN GỌN, SÚC TÍCH theo ĐÚNG 3 mục sau. 
+          QUY TẮC NGHIÊM NGẶT: KHÔNG viết thêm bất kỳ phần nào khác, KHÔNG thêm "Mẹo làm bài", KHÔNG thêm câu hỏi tu từ, KHÔNG chào hỏi hay chúc tụng ở cuối.
+
+          1. **Điểm sáng:** Khen ngợi ngắn gọn môn học hoặc điểm số đang làm tốt (1-2 câu).
+          2. **Vấn đề cốt lõi:** Phân tích trực diện môn nào đang kéo điểm xuống (1-2 câu).
+          3. **Chiến lược 7 ngày tới:** Đề xuất lộ trình học tập cực kỳ cụ thể để khắc phục môn yếu nhất (2-3 gạch đầu dòng ngắn).
+
+          Định dạng Markdown rõ ràng, dễ nhìn.
+          ''';
+      final response = await _chatSession.sendMessage(Content.text(prompt));
+      return response.text ?? 'Không thể tạo báo cáo lúc này.';
+    } catch (e) {
+      return 'Lỗi khi phân tích dữ liệu học tập.';
+    }
+  }
+
+  // 3. AI TẠO FLASHCARD TỰ ĐỘNG (Auto Flashcard Generator)
+  Future<List<Map<String, String>>> generateFlashcards({
+    required String topicContent,
+  }) async {
+    try {
+      String prompt =
+          '''
+          Hãy trích xuất nội dung sau thành các thẻ ghi nhớ (Flashcard).
+          Nội dung: "$topicContent"
+
+          Quy tắc xuất dữ liệu RẤT NGHIÊM NGẶT:
+          - Trả về đúng 5 thẻ quan trọng nhất.
+          - Mỗi thẻ nằm trên 1 dòng.
+          - Mặt trước và mặt sau cách nhau bởi ký tự dấu gạch đứng "|".
+          - Không có dòng tiêu đề, không có số thứ tự, chỉ xuất đúng định dạng: Mặt trước | Mặt sau
+
+          Ví dụ:
+          Công thức tính diện tích hình tròn | S = π * r^2
+          Tác phẩm Vợ Nhặt do ai sáng tác? | Nhà văn Kim Lân
+          ''';
+      final response = await _chatSession.sendMessage(Content.text(prompt));
+      String resultText = response.text ?? '';
+
+      // Xử lý chuỗi trả về thành mảng List Map cho Flutter dễ vẽ giao diện
+      List<Map<String, String>> flashcards = [];
+      List<String> lines = resultText.split('\n');
+      for (String line in lines) {
+        if (line.contains('|')) {
+          List<String> parts = line.split('|');
+          if (parts.length == 2) {
+            flashcards.add({'front': parts[0].trim(), 'back': parts[1].trim()});
+          }
+        }
+      }
+      return flashcards;
+    } catch (e) {
+      return [];
+    }
+  }
 }

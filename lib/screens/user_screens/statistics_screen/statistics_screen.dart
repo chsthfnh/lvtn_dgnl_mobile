@@ -3,6 +3,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:async';
 import 'dart:math';
+import '../ai_screens/ai_performance_analysis_widget.dart';
+import 'package:fl_chart/fl_chart.dart';
 
 class StatisticsScreen extends StatefulWidget {
   const StatisticsScreen({super.key});
@@ -337,6 +339,14 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
     List<int> practiceData,
     List<int> examData,
   ) {
+    // Tính toán trục Y cao nhất để biểu đồ không bị kịch trần
+    double maxY = 0;
+    for (int i = 0; i < 7; i++) {
+      double total = (practiceData[i] + examData[i]).toDouble();
+      if (total > maxY) maxY = total;
+    }
+    if (maxY == 0) maxY = 10; // Mặc định nếu chưa có dữ liệu
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -370,17 +380,10 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
             ),
             const SizedBox(height: 8),
             Text(title, style: const TextStyle(color: Colors.grey)),
-            const SizedBox(height: 16),
+            const SizedBox(height: 24),
             Row(
               children: [
-                Container(
-                  width: 12,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    color: _primary,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
+                Container(width: 12, height: 12, color: _primary),
                 const SizedBox(width: 6),
                 const Text(
                   'Luyện tập',
@@ -390,10 +393,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                 Container(
                   width: 12,
                   height: 12,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE65100),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+                  color: const Color(0xFFE65100),
                 ),
                 const SizedBox(width: 6),
                 const Text(
@@ -402,81 +402,116 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 24),
-            Expanded(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: List.generate(7, (index) {
-                  int pVal = practiceData[index];
-                  int eVal = examData[index];
-                  int totalVal = pVal + eVal;
-                  int maxTotal = 0;
-                  for (int i = 0; i < 7; i++) {
-                    if (practiceData[i] + examData[i] > maxTotal)
-                      maxTotal = practiceData[i] + examData[i];
-                  }
-                  double heightRatio = maxTotal == 0
-                      ? 0.0
-                      : totalVal / maxTotal;
+            const SizedBox(height: 32),
 
-                  return Column(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      Text(
-                        '$totalVal',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: _primary,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      if (totalVal == 0)
-                        Container(
-                          width: 26,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: Colors.grey.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(6),
+            // --- KHU VỰC VẼ BIỂU ĐỒ BẰNG FL_CHART ---
+            Expanded(
+              child: BarChart(
+                BarChartData(
+                  alignment: BarChartAlignment.spaceAround,
+                  maxY: maxY + (maxY * 0.2), // Thêm 20% khoảng trống phía trên
+                  barTouchData: BarTouchData(
+                    enabled: true,
+                    touchTooltipData: BarTouchTooltipData(
+                      getTooltipColor: (group) => _primary,
+                      getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                        return BarTooltipItem(
+                          '${rod.toY.toInt()} $unit',
+                          const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
                           ),
-                        )
-                      else
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: SizedBox(
-                            width: 26,
-                            height: max(4.0, 150 * heightRatio),
-                            child: Column(
-                              children: [
-                                if (eVal > 0)
-                                  Expanded(
-                                    flex: eVal,
-                                    child: Container(
-                                      color: const Color(0xFFE65100),
-                                    ),
-                                  ),
-                                if (pVal > 0)
-                                  Expanded(
-                                    flex: pVal,
-                                    child: Container(color: _primary),
-                                  ),
-                              ],
+                        );
+                      },
+                    ),
+                  ),
+                  titlesData: FlTitlesData(
+                    show: true,
+                    bottomTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        getTitlesWidget: (value, meta) {
+                          const days = [
+                            'T2',
+                            'T3',
+                            'T4',
+                            'T5',
+                            'T6',
+                            'T7',
+                            'CN',
+                          ];
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 8.0),
+                            child: Text(
+                              days[value.toInt()],
+                              style: const TextStyle(
+                                color: Colors.grey,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
                             ),
+                          );
+                        },
+                      ),
+                    ),
+                    leftTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                    topTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                    rightTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                  ),
+                  gridData: FlGridData(
+                    show: true,
+                    drawVerticalLine: false,
+                    horizontalInterval: maxY > 0
+                        ? (maxY / 4 > 0 ? maxY / 4 : 1)
+                        : 1,
+                    getDrawingHorizontalLine: (value) => FlLine(
+                      color: Colors.grey.withOpacity(0.2),
+                      strokeWidth: 1,
+                      dashArray: [4, 4], // Kẻ vạch ngang đứt khúc cho đẹp
+                    ),
+                  ),
+                  borderData: FlBorderData(show: false),
+                  barGroups: List.generate(7, (index) {
+                    double pVal = practiceData[index].toDouble();
+                    double eVal = examData[index].toDouble();
+                    double total = pVal + eVal;
+
+                    return BarChartGroupData(
+                      x: index,
+                      barRods: [
+                        BarChartRodData(
+                          toY: total,
+                          width: 16, // Độ rộng của cột
+                          borderRadius: BorderRadius.circular(4),
+                          // Tính năng Stacked Bar (Chồng 2 màu)
+                          rodStackItems: [
+                            BarChartRodStackItem(0, pVal, _primary),
+                            BarChartRodStackItem(
+                              pVal,
+                              total,
+                              const Color(0xFFE65100),
+                            ),
+                          ],
+                          backDrawRodData: BackgroundBarChartRodData(
+                            show: true,
+                            toY: maxY + (maxY * 0.2),
+                            color: Colors.grey.shade100, // Cột bóng mờ làm nền
                           ),
                         ),
-                      const SizedBox(height: 8),
-                      Text(
-                        index == 6 ? 'CN' : 'T${index + 2}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  );
-                }),
+                      ],
+                    );
+                  }),
+                ),
+                swapAnimationDuration: const Duration(
+                  milliseconds: 600,
+                ), // Thời gian chạy animation
+                swapAnimationCurve: Curves.easeOutQuart,
               ),
             ),
           ],
@@ -548,6 +583,17 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
   Widget build(BuildContext context) {
     double targetRatio = _targetScore / 1200;
 
+    // --- BƯỚC 1: TẠO CHUỖI DỮ LIỆU ĐỘNG CHO AI PHÂN TÍCH ---
+    String statsSummary =
+        '''
+- Tổng số câu đã làm: $_totalQuestions câu
+- Độ chính xác tổng thể: ${(_accuracy * 100).toInt()}%
+- Điểm dự kiến hiện tại: $_currentPredictedScore / 1200 (Mục tiêu: $_targetScore)
+- Năng lực Ngôn ngữ: ${(_sectionSkills['Ngôn ngữ']! * 100).toInt()}%
+- Năng lực Toán học: ${(_sectionSkills['Toán học']! * 100).toInt()}%
+- Năng lực Tư duy Logic: ${(_sectionSkills['Tư duy Logic']! * 100).toInt()}%
+''';
+
     return Scaffold(
       backgroundColor: _bgLight,
       body: _isLoading
@@ -589,6 +635,10 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
                       ),
                     ),
                     _buildAccuracyCard(),
+                    const SizedBox(height: 24),
+
+                    // --- BƯỚC 2: CHÈN CARD BÁO CÁO AI VÀO ĐÂY ---
+                    AIPerformanceAnalysisCard(historyStatsText: statsSummary),
                     const SizedBox(height: 24),
 
                     // THẺ TIẾN ĐỘ GAMIFICATION NẰM NGAY TRÊN HOẠT ĐỘNG GẦN ĐÂY

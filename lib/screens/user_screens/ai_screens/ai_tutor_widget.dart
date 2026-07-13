@@ -29,6 +29,9 @@ class _DraggableAITutorWidgetState extends State<DraggableAITutorWidget>
   bool _isOverCloseTarget = false;
   bool _isIdle = false;
   Timer? _idleTimer;
+  bool _isChatOpen = false;
+
+  final List<Map<String, dynamic>> _chatHistory = []; //Luu lich su tro truyen
 
   final double _bubbleSize = 64.0;
   final double _closeTargetSize = 70.0;
@@ -128,10 +131,18 @@ class _DraggableAITutorWidgetState extends State<DraggableAITutorWidget>
 
   void _openChatBottomSheet() {
     _idleTimer?.cancel();
-    setState(() => _isIdle = false);
+
+    // 1. Đánh dấu chat đang mở
+    setState(() {
+      _isIdle = false;
+      _isChatOpen = true;
+    });
 
     final validContext = navigatorKey.currentContext;
-    if (validContext == null) return;
+    if (validContext == null) {
+      setState(() => _isChatOpen = false);
+      return;
+    }
 
     showModalBottomSheet(
       context: validContext,
@@ -140,12 +151,20 @@ class _DraggableAITutorWidgetState extends State<DraggableAITutorWidget>
       builder: (ctx) => _ChatInterface(
         aiService: _aiService,
         currentScreen: widget.currentScreen,
+        messages: _chatHistory,
       ),
-    ).then((_) => _startIdleTimer());
+    ).then((_) {
+      // 2. KHI ĐÓNG KHUNG CHAT SẼ CHẠY VÀO ĐÂY: Trả lại bong bóng
+      if (mounted) {
+        setState(() => _isChatOpen = false);
+        _startIdleTimer();
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isChatOpen) return const SizedBox.shrink();
     final size = MediaQuery.of(context).size;
 
     return Stack(
@@ -233,7 +252,14 @@ class _DraggableAITutorWidgetState extends State<DraggableAITutorWidget>
 class _ChatInterface extends StatefulWidget {
   final AITutorService aiService;
   final String currentScreen;
-  const _ChatInterface({required this.aiService, required this.currentScreen});
+
+  final List<Map<String, dynamic>> messages;
+
+  const _ChatInterface({
+    required this.aiService,
+    required this.currentScreen,
+    required this.messages,
+  });
 
   @override
   State<_ChatInterface> createState() => _ChatInterfaceState();
@@ -242,18 +268,20 @@ class _ChatInterface extends StatefulWidget {
 class _ChatInterfaceState extends State<_ChatInterface> {
   final Color _primary = const Color(0xFF002045);
   final TextEditingController _textCtrl = TextEditingController();
-  final List<Map<String, dynamic>> _messages = [];
   bool _isTyping = false;
   final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _messages.add({
-      'isUser': false,
-      'text':
-          'Chào bạn! Mình là AI Tutor. Mình thấy bạn đang ở màn hình **${widget.currentScreen}**. Mình có thể giúp gì cho bạn hôm nay?',
-    });
+    // CHỈ CHÀO HỎI KHI LỊCH SỬ TRỐNG
+    if (widget.messages.isEmpty) {
+      widget.messages.add({
+        'isUser': false,
+        'text':
+            'Chào bạn! Mình là AI Tutor. Mình thấy bạn đang ở màn hình **${widget.currentScreen}**. Mình có thể giúp gì cho bạn hôm nay?',
+      });
+    }
   }
 
   void _handleSend() async {
@@ -261,7 +289,7 @@ class _ChatInterfaceState extends State<_ChatInterface> {
     if (text.isEmpty) return;
 
     setState(() {
-      _messages.add({'isUser': true, 'text': text});
+      widget.messages.add({'isUser': true, 'text': text});
       _isTyping = true;
       _textCtrl.clear();
     });
@@ -275,7 +303,7 @@ class _ChatInterfaceState extends State<_ChatInterface> {
     if (mounted) {
       setState(() {
         _isTyping = false;
-        _messages.add({'isUser': false, 'text': reply});
+        widget.messages.add({'isUser': false, 'text': reply});
       });
       _scrollToBottom();
     }
@@ -293,6 +321,7 @@ class _ChatInterfaceState extends State<_ChatInterface> {
     });
   }
 
+  // ĐÂY LÀ HÀM BUILD ĐÃ BỊ THIẾU CỦA BẠN NÈ
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -350,10 +379,15 @@ class _ChatInterfaceState extends State<_ChatInterface> {
             child: ListView.builder(
               controller: _scrollController,
               padding: const EdgeInsets.all(16),
-              itemCount: _messages.length,
+              // ĐÃ SỬA: Lấy độ dài từ lịch sử truyền vào
+              itemCount: widget.messages.length,
               itemBuilder: (context, index) {
-                bool isUser = _messages[index]['isUser'];
-                return _buildMessageBubble(isUser, _messages[index]['text']);
+                // ĐÃ SỬA: Lấy tin nhắn từ lịch sử truyền vào
+                bool isUser = widget.messages[index]['isUser'];
+                return _buildMessageBubble(
+                  isUser,
+                  widget.messages[index]['text'],
+                );
               },
             ),
           ),
@@ -454,3 +488,219 @@ class _ChatInterfaceState extends State<_ChatInterface> {
     );
   }
 }
+
+// class _ChatInterfaceState extends State<_ChatInterface> {
+//   final Color _primary = const Color(0xFF002045);
+//   final TextEditingController _textCtrl = TextEditingController();
+//   final List<Map<String, dynamic>> _messages = [];
+//   bool _isTyping = false;
+//   final ScrollController _scrollController = ScrollController();
+
+//   @override
+//   void initState() {
+//     super.initState();
+//     _messages.add({
+//       'isUser': false,
+//       'text':
+//           'Chào bạn! Mình là AI Tutor. Mình thấy bạn đang ở màn hình **${widget.currentScreen}**. Mình có thể giúp gì cho bạn hôm nay?',
+//     });
+//   }
+
+//   void _handleSend() async {
+//     String text = _textCtrl.text.trim();
+//     if (text.isEmpty) return;
+
+//     setState(() {
+//       _messages.add({'isUser': true, 'text': text});
+//       _isTyping = true;
+//       _textCtrl.clear();
+//     });
+//     _scrollToBottom();
+
+//     String reply = await widget.aiService.sendMessage(
+//       text,
+//       widget.currentScreen,
+//     );
+
+//     if (mounted) {
+//       setState(() {
+//         _isTyping = false;
+//         _messages.add({'isUser': false, 'text': reply});
+//       });
+//       _scrollToBottom();
+//     }
+//   }
+
+//   void _scrollToBottom() {
+//     Future.delayed(const Duration(milliseconds: 100), () {
+//       if (_scrollController.hasClients) {
+//         _scrollController.animateTo(
+//           _scrollController.position.maxScrollExtent,
+//           duration: const Duration(milliseconds: 300),
+//           curve: Curves.easeOut,
+//         );
+//       }
+//     });
+//   }
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return Container(
+//       height: MediaQuery.of(context).size.height * 0.85,
+//       decoration: const BoxDecoration(
+//         color: Color(0xFFF8F9FF),
+//         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+//       ),
+//       child: Column(
+//         children: [
+//           Container(
+//             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+//             decoration: const BoxDecoration(
+//               color: Colors.white,
+//               borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+//               border: Border(bottom: BorderSide(color: Colors.black12)),
+//             ),
+//             child: Row(
+//               mainAxisAlignment: MainAxisAlignment.spaceBetween,
+//               children: [
+//                 Row(
+//                   children: [
+//                     Container(
+//                       padding: const EdgeInsets.all(8),
+//                       decoration: BoxDecoration(
+//                         color: Colors.blue.shade50,
+//                         shape: BoxShape.circle,
+//                       ),
+//                       child: Icon(
+//                         Icons.smart_toy,
+//                         color: Colors.blue.shade700,
+//                         size: 20,
+//                       ),
+//                     ),
+//                     const SizedBox(width: 12),
+//                     Text(
+//                       'AI Tutor',
+//                       style: TextStyle(
+//                         color: _primary,
+//                         fontWeight: FontWeight.bold,
+//                         fontSize: 18,
+//                       ),
+//                     ),
+//                   ],
+//                 ),
+//                 IconButton(
+//                   icon: const Icon(Icons.close),
+//                   onPressed: () => Navigator.pop(context),
+//                 ),
+//               ],
+//             ),
+//           ),
+
+//           Expanded(
+//             child: ListView.builder(
+//               controller: _scrollController,
+//               padding: const EdgeInsets.all(16),
+//               itemCount: _messages.length,
+//               itemBuilder: (context, index) {
+//                 bool isUser = _messages[index]['isUser'];
+//                 return _buildMessageBubble(isUser, _messages[index]['text']);
+//               },
+//             ),
+//           ),
+
+//           if (_isTyping)
+//             Padding(
+//               padding: const EdgeInsets.only(left: 20, bottom: 8),
+//               child: Align(
+//                 alignment: Alignment.centerLeft,
+//                 child: Text(
+//                   'AI Tutor đang phân tích...',
+//                   style: TextStyle(
+//                     color: Colors.grey.shade600,
+//                     fontStyle: FontStyle.italic,
+//                     fontSize: 12,
+//                   ),
+//                 ),
+//               ),
+//             ),
+
+//           Container(
+//             padding: EdgeInsets.only(
+//               left: 16,
+//               right: 16,
+//               top: 12,
+//               bottom: MediaQuery.of(context).viewInsets.bottom + 12,
+//             ),
+//             decoration: const BoxDecoration(
+//               color: Colors.white,
+//               border: Border(top: BorderSide(color: Colors.black12)),
+//             ),
+//             child: Row(
+//               children: [
+//                 Expanded(
+//                   child: TextField(
+//                     controller: _textCtrl,
+//                     decoration: InputDecoration(
+//                       hintText: 'Nhập câu hỏi...',
+//                       hintStyle: TextStyle(color: Colors.grey.shade400),
+//                       border: OutlineInputBorder(
+//                         borderRadius: BorderRadius.circular(24),
+//                         borderSide: BorderSide.none,
+//                       ),
+//                       filled: true,
+//                       fillColor: Colors.grey.shade100,
+//                       contentPadding: const EdgeInsets.symmetric(
+//                         horizontal: 20,
+//                         vertical: 12,
+//                       ),
+//                     ),
+//                     onSubmitted: (_) => _handleSend(),
+//                   ),
+//                 ),
+//                 const SizedBox(width: 8),
+//                 CircleAvatar(
+//                   backgroundColor: _primary,
+//                   child: IconButton(
+//                     icon: const Icon(Icons.send, color: Colors.white, size: 20),
+//                     onPressed: _handleSend,
+//                   ),
+//                 ),
+//               ],
+//             ),
+//           ),
+//         ],
+//       ),
+//     );
+//   }
+
+//   Widget _buildMessageBubble(bool isUser, String text) {
+//     return Align(
+//       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+//       child: Container(
+//         margin: const EdgeInsets.only(bottom: 12),
+//         constraints: BoxConstraints(
+//           maxWidth: MediaQuery.of(context).size.width * 0.75,
+//         ),
+//         padding: const EdgeInsets.all(12),
+//         decoration: BoxDecoration(
+//           color: isUser ? _primary : Colors.white,
+//           borderRadius: BorderRadius.only(
+//             topLeft: const Radius.circular(16),
+//             topRight: const Radius.circular(16),
+//             bottomLeft: Radius.circular(isUser ? 16 : 4),
+//             bottomRight: Radius.circular(isUser ? 4 : 16),
+//           ),
+//           border: isUser ? null : Border.all(color: Colors.grey.shade300),
+//         ),
+//         child: isUser
+//             ? Text(text, style: const TextStyle(color: Colors.white))
+//             : MarkdownBody(
+//                 data: text,
+//                 styleSheet: MarkdownStyleSheet(
+//                   p: const TextStyle(color: Colors.black87, height: 1.5),
+//                 ),
+//               ),
+//       ),
+//     );
+//   }
+// }

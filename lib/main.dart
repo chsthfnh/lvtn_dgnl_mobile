@@ -4,11 +4,15 @@ import 'firebase_options.dart';
 import 'auth/auth_wrapper.dart';
 import '/screens/globals.dart';
 import 'screens/user_screens/ai_screens/ai_tutor_widget.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  await Hive.initFlutter();
+  await Hive.openBox('offline_exams');
 
   runApp(const MyApp());
 }

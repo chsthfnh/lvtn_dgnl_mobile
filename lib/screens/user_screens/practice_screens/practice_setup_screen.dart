@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'practice_screen.dart';
 import 'level_config.dart';
+import '../../../services/hive_service.dart';
 
 class PracticeSetupScreen extends StatefulWidget {
   final bool isTab;
@@ -413,7 +414,7 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
                     questions: questions,
                     timeInMinutes: _isLevelMode
                         ? (count * 1.5).round()
-                        : _duration, // Level mode auto set thời gian = số câu * 1.5p
+                        : _duration,
                     subjectName:
                         '$_progressKey ${_isLevelMode ? '(Level $_currentLevel)' : ''}',
                     isTab: widget.isTab,

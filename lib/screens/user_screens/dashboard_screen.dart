@@ -8,6 +8,10 @@ import 'mock_exam_screens/exam_detail_screen.dart';
 import 'statistics_screen/statistics_screen.dart';
 import 'dart:async';
 import '../globals.dart';
+import 'ai_screens/ai_daily_suggestion_widget.dart';
+import 'ai_screens/ai_flashcard_screen.dart';
+import 'ai_screens/ai_ocr_scanner_widget.dart';
+import 'mock_exam_screens/offline_exams_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -423,6 +427,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
       body: pages[_selectedIndex],
+
       bottomNavigationBar: NavigationBarTheme(
         data: NavigationBarThemeData(
           indicatorColor: Colors.greenAccent.withValues(alpha: 0.3),
@@ -442,6 +447,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
           onDestinationSelected: (index) {
             setState(() => _selectedIndex = index);
             updatePresence('idle');
+            switch (index) {
+              case 0:
+                currentScreenNotifier.value = 'Trang chủ';
+                break;
+              case 1:
+                currentScreenNotifier.value = 'Luyện tập';
+                break;
+              case 2:
+                currentScreenNotifier.value = 'Thống kê';
+                break;
+              case 3:
+                currentScreenNotifier.value = 'Hồ sơ';
+                break;
+            }
           },
           backgroundColor: Colors.white,
           destinations: const [
@@ -492,6 +511,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
             'Tiếp tục hành trình chinh phục kỳ thi ĐGNL nhé!',
             style: TextStyle(fontSize: 14, color: Colors.grey),
           ),
+          const SizedBox(height: 20),
+
+          // ---THẺ AI GỢI Ý ---
+          AIDailySuggestionCard(
+            ngonNguProgress: _ngonNguProgress,
+            toanHocProgress: _toanHocProgress,
+            logicProgress: _logicProgress,
+          ),
           const SizedBox(height: 24),
 
           // --- KHỐI TIẾN ĐỘ HỌC TẬP MỚI ---
@@ -499,7 +526,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
           const SizedBox(height: 24),
 
-          // KHÔI PHỤC LẠI 4 NÚT MENU NHANH ĐẸP MẮT
+          // KHÔI PHỤC LẠI BỐ CỤC LƯỚI 2x2 CHO MENU CHÍNH
           Row(
             children: [
               Expanded(
@@ -509,12 +536,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   const Color(0xFF28355A),
                   Colors.white,
                   Colors.blue.withValues(alpha: 0.5),
-                  () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const PracticeSetupScreen(),
-                    ),
-                  ).then((_) => updatePresence('idle')),
+                  () {
+                    currentScreenNotifier.value = 'Luyện tập theo môn';
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const PracticeSetupScreen(),
+                      ),
+                    ).then((_) {
+                      currentScreenNotifier.value = 'Trang chủ';
+                      updatePresence('idle');
+                    });
+                  },
                 ),
               ),
               const SizedBox(width: 16),
@@ -525,12 +558,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   const Color(0xFFE8EAF6),
                   const Color(0xFF002045),
                   const Color(0xFF002045),
-                  () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const MockExamScreen(),
-                    ),
-                  ).then((_) => updatePresence('idle')),
+                  () {
+                    currentScreenNotifier.value = 'Thi thử ĐGNL';
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const MockExamScreen(),
+                      ),
+                    ).then((_) {
+                      currentScreenNotifier.value = 'Trang chủ';
+                      updatePresence('idle');
+                    });
+                  },
                 ),
               ),
             ],
@@ -551,7 +590,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       isEnabled ? Colors.white : const Color(0xFFE65100),
                       isEnabled ? Colors.white : const Color(0xFFE65100),
                       () {
-                        // KHI BẤM NÚT, CHỈ CẦN ĐẢO NGƯỢC BIẾN TOÀN CỤC NÀY
                         aiTutorNotifier.value = !isEnabled;
                       },
                       borderColor: isEnabled
@@ -574,7 +612,76 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 32),
+
+          const SizedBox(height: 16),
+
+          // --- HÀNG 3: CÁC TÍNH NĂNG AI BỔ TRỢ ---
+          Row(
+            children: [
+              Expanded(
+                child: _buildMenuCard(
+                  'Tạo Flashcard\n(AI Tự Động)', // Thêm \n để xuống dòng cho cân đối
+                  Icons.style,
+                  const Color(0xFFFFF3E0), // Nền cam nhạt
+                  const Color(0xFFE65100), // Chữ cam đậm
+                  const Color(0xFFE65100),
+                  () {
+                    currentScreenNotifier.value = 'AI Flashcard';
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const AIFlashcardScreen(),
+                      ),
+                    ).then((_) {
+                      currentScreenNotifier.value = 'Trang chủ';
+                      updatePresence('idle');
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildMenuCard(
+                  'Quét bài giải\n(AI Nhận Diện)',
+                  Icons.document_scanner,
+                  const Color(0xFFE8EAF6), // Nền xanh nhạt
+                  const Color(0xFF002045), // Chữ xanh đậm
+                  const Color(0xFF002045),
+                  () {
+                    // Gọi BottomSheet quét ảnh lên
+                    AIOcrScannerSheet.show(context);
+                  },
+                ),
+              ),
+            ],
+          ),
+          // --- NÚT TRUY CẬP KHO ĐỀ OFFLINE ---
+          const SizedBox(height: 16),
+
+          SizedBox(
+            width: double.infinity,
+            child: _buildMenuCard(
+              'Kho Đề Offline (Không cần mạng)',
+              Icons.cloud_done,
+              const Color(0xFFE8F5E9), // Xanh lá nhạt
+              const Color(0xFF2E7D32), // Chữ xanh lá đậm
+              const Color(0xFF2E7D32),
+              () {
+                currentScreenNotifier.value = 'Kho đề Offline';
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const OfflineExamsScreen(),
+                  ),
+                ).then((_) {
+                  currentScreenNotifier.value = 'Trang chủ';
+                  updatePresence('idle');
+                });
+              },
+            ),
+          ),
+          const SizedBox(height: 24),
+          // --- KẾT THÚC NÚT KHO ĐỀ ---
 
           // PHẦN ĐỀ THI ĐỀ XUẤT TỪ FIREBASE
           Row(
@@ -590,12 +697,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               TextButton(
                 onPressed: () {
+                  currentScreenNotifier.value =
+                      'Danh sách Đề thi thử'; // BÁO CHO AI
                   Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (context) => const MockExamScreen(),
                     ),
-                  );
+                  ).then(
+                    (_) => currentScreenNotifier.value = 'Trang chủ',
+                  ); // QUAY LẠI
                 },
                 child: const Text(
                   'Xem tất cả >',
@@ -830,12 +941,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 data['tenDeThi'] ?? 'Đề thi ĐGNL',
                 '${data['thoiGian'] ?? 150} phút',
                 '${data['soCauHoi'] ?? 120} câu',
-                () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => ExamDetailScreen(examDoc: doc),
-                  ),
-                ),
+                () {
+                  currentScreenNotifier.value = 'Chi tiết đề thi'; // BÁO CHO AI
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ExamDetailScreen(examDoc: doc),
+                    ),
+                  ).then(
+                    (_) => currentScreenNotifier.value = 'Trang chủ',
+                  ); // QUAY LẠI
+                },
               ),
             );
           }).toList(),

@@ -1,11 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'real_exam_screen.dart';
+import '../../../services/hive_service.dart';
 
-class ExamDetailScreen extends StatelessWidget {
+class ExamDetailScreen extends StatefulWidget {
   final DocumentSnapshot examDoc;
 
   const ExamDetailScreen({super.key, required this.examDoc});
+
+  @override
+  State<ExamDetailScreen> createState() => _ExamDetailScreenState();
+}
+
+class _ExamDetailScreenState extends State<ExamDetailScreen> {
+  // Khởi tạo Hive Service
+  final HiveService _hiveService = HiveService();
+  bool _isDownloading = false;
 
   // --- BẢNG MÀU DESIGN SYSTEM ---
   final Color _primary = const Color(0xFF002045);
@@ -13,21 +23,41 @@ class ExamDetailScreen extends StatelessWidget {
   final Color _surfaceLow = const Color(0xFFEFF4FF);
   final Color _outline = const Color(0xFFC4C6CF);
 
+  // Hàm xử lý tải đề
+  void _handleDownload() async {
+    setState(() => _isDownloading = true);
+
+    Map<String, dynamic> examData =
+        widget.examDoc.data() as Map<String, dynamic>;
+
+    bool success = await _hiveService.downloadExamForOffline(
+      examId: widget.examDoc.id,
+      examData: examData,
+    );
+
+    if (mounted) {
+      setState(() => _isDownloading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            success
+                ? 'Đã tải đề thi thành công! Bạn có thể làm khi không có mạng.'
+                : 'Lỗi khi tải đề thi.',
+          ),
+          backgroundColor: success ? Colors.green : Colors.red,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    // --- 1. TRÍCH XUẤT VÀ TÍNH TOÁN DỮ LIỆU ---
-    Map<String, dynamic> data = examDoc.data() as Map<String, dynamic>;
-
+    Map<String, dynamic> data = widget.examDoc.data() as Map<String, dynamic>;
     String title = data['tenDeThi'] ?? 'Đề thi ĐGNL';
     int timeInMinutes = data['thoiGian'] ?? 150;
     int totalQuestions = data['soCauHoi'] ?? 120;
-
-    // Thuật toán tính thang điểm: Số câu hỏi * 10
     int totalScore = totalQuestions * 10;
 
-    // Lấy cấu trúc đề thi (Nếu Admin chưa set, dùng mảng rỗng để không bị lỗi)
-    // Giả định Admin lưu cấu trúc dạng List các Map:
-    // [{'tenPhan': 'Sử dụng ngôn ngữ', 'soCau': 60, 'chiTiet': 'Tiếng Việt (30)...'}]
     List<dynamic> cauTruc =
         data['cauTruc'] ??
         [
@@ -49,6 +79,9 @@ class ExamDetailScreen extends StatelessWidget {
           },
         ];
 
+    // Kiểm tra xem đề này đã tải chưa
+    bool isDownloaded = _hiveService.isExamDownloaded(widget.examDoc.id);
+
     return Scaffold(
       backgroundColor: _bgLight,
       appBar: AppBar(
@@ -67,18 +100,6 @@ class ExamDetailScreen extends StatelessWidget {
             fontSize: 18,
           ),
         ),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.info_outline, color: _primary),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Thông tin phiên bản đề thi: v1.0'),
-                ),
-              );
-            },
-          ),
-        ],
       ),
       body: Column(
         children: [
@@ -93,25 +114,15 @@ class ExamDetailScreen extends StatelessWidget {
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(16),
                     gradient: const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
                       colors: [
                         Color(0xFF5D849A),
                         Color(0xFF1A365D),
                         Color(0xFF002045),
                       ],
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: _primary.withOpacity(0.2),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
                   ),
                   child: Stack(
                     children: [
-                      // Hiệu ứng pattern mờ (Nếu có ảnh pattern, dùng DecorationImage)
                       Positioned(
                         bottom: 20,
                         left: 20,
@@ -122,10 +133,7 @@ class ExamDetailScreen extends StatelessWidget {
                             color: Colors.white,
                             fontSize: 22,
                             fontWeight: FontWeight.bold,
-                            height: 1.3,
                           ),
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
@@ -178,8 +186,6 @@ class ExamDetailScreen extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 16),
-
-                // Render linh hoạt danh sách cấu trúc từ Firebase
                 ...List.generate(cauTruc.length, (index) {
                   var item = cauTruc[index];
                   return _buildStructureItem(
@@ -189,69 +195,11 @@ class ExamDetailScreen extends StatelessWidget {
                     item['chiTiet'] ?? '',
                   );
                 }),
-                const SizedBox(height: 32),
-
-                // --- 5. QUY ĐỊNH & LƯU Ý ---
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: _surfaceLow,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: _outline.withOpacity(0.2)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.rule, color: _primary),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Quy định & Lưu ý',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: _primary,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      _buildRuleItem(
-                        Icons.check_circle_outline,
-                        Colors.green,
-                        'Thời gian làm bài liên tục:',
-                        'Đồng hồ sẽ không dừng lại kể cả khi bạn thoát ứng dụng.',
-                      ),
-                      const SizedBox(height: 12),
-                      _buildRuleItem(
-                        Icons.warning_amber_rounded,
-                        Colors.red,
-                        'Môi trường tập trung:',
-                        'Khuyến nghị làm bài ở nơi yên tĩnh, kết nối mạng ổn định để tránh gián đoạn.',
-                      ),
-                      const SizedBox(height: 12),
-                      _buildRuleItem(
-                        Icons.u_turn_left,
-                        _primary,
-                        'Điều hướng linh hoạt:',
-                        'Bạn có thể quay lại các câu hỏi trước để sửa đáp án trước khi nộp bài.',
-                      ),
-                      const SizedBox(height: 12),
-                      _buildRuleItem(
-                        Icons.check_circle_outline,
-                        Colors.green,
-                        'Kết quả và phân tích chi tiết',
-                        'sẽ được hiển thị ngay sau khi bạn xác nhận Nộp Bài.',
-                      ),
-                    ],
-                  ),
-                ),
               ],
             ),
           ),
 
-          // --- 6. NÚT BẮT ĐẦU LÀM BÀI (STICKY BOTTOM) ---
+          // --- 6. NÚT TẢI VỀ & BẮT ĐẦU (STICKY BOTTOM) ---
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
@@ -265,37 +213,77 @@ class ExamDetailScreen extends StatelessWidget {
               ],
             ),
             child: SafeArea(
-              child: ElevatedButton(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => RealExamScreen(examDoc: examDoc),
-                    ),
-                  );
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      'Bắt đầu làm bài',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+              child: Column(
+                mainAxisSize: MainAxisSize.min, // Để column ôm sát 2 nút
+                children: [
+                  // NÚT TẢI VỀ
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: (isDownloaded || _isDownloading)
+                          ? null
+                          : _handleDownload,
+                      icon: _isDownloading
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(
+                              isDownloaded
+                                  ? Icons.cloud_done
+                                  : Icons.cloud_download,
+                            ),
+                      label: Text(
+                        isDownloaded
+                            ? 'Đã lưu trên máy (Offline)'
+                            : 'Tải về máy (Học Offline)',
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        foregroundColor: isDownloaded ? Colors.green : _primary,
+                        side: BorderSide(
+                          color: isDownloaded ? Colors.green : _primary,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                     ),
-                    SizedBox(width: 8),
-                    Icon(Icons.arrow_forward, size: 20),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 12),
+                  // NÚT BẮT ĐẦU LÀM BÀI
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                RealExamScreen(examDoc: widget.examDoc),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.arrow_forward, size: 20),
+                      label: const Text(
+                        'Bắt đầu làm bài',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -304,8 +292,7 @@ class ExamDetailScreen extends StatelessWidget {
     );
   }
 
-  // --- HÀM HỖ TRỢ XÂY DỰNG GIAO DIỆN (WIDGET BUILDERS) ---
-
+  // --- CÁC HÀM XÂY DỰNG UI BÊN DƯỚI GIỮ NGUYÊN ---
   Widget _buildStatCard(
     IconData? icon,
     String label,
@@ -440,40 +427,6 @@ class ExamDetailScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildRuleItem(
-    IconData icon,
-    Color iconColor,
-    String boldText,
-    String normalText,
-  ) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, color: iconColor, size: 20),
-        const SizedBox(width: 12),
-        Expanded(
-          child: RichText(
-            text: TextSpan(
-              style: const TextStyle(
-                fontSize: 14,
-                color: Colors.black87,
-                height: 1.5,
-              ),
-              children: [
-                TextSpan(
-                  text: '$boldText ',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                TextSpan(text: normalText),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // Thuật toán chuyển số nguyên thành số La Mã (I, II, III...)
   String _getRomanNumeral(int number) {
     List<String> numerals = [
       "",

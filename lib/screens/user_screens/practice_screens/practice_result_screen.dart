@@ -10,7 +10,7 @@ class PracticeResultScreen extends StatelessWidget {
   final int correctAnswers;
   final String timeSpent;
   final String subjectName;
-  final List<DocumentSnapshot> questions;
+  final List<dynamic> questions;
   final Map<int, int> userAnswers;
   final bool isTab;
 
