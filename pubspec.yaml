@@ -54,6 +54,7 @@ dependencies:
   google_generative_ai: ^0.4.3
   flutter_markdown: ^0.7.1
   google_mlkit_text_recognition: ^0.16.0
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_test:

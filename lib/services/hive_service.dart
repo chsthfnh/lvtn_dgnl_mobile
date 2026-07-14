@@ -26,22 +26,27 @@ class HiveService {
   }) async {
     try {
       var box = Hive.box(boxName);
-
-      // BƯỚC 1: Làm sạch dữ liệu thông tin Đề thi (thường có trường createdAt)
       Map<String, dynamic> safeExamData = _sanitizeData(examData);
 
+      // SỬA LỖI Ở ĐÂY: Truy vấn đúng trường 'maDeThi' thay vì 'examId'
       QuerySnapshot qSnapshot = await FirebaseFirestore.instance
           .collection('Questions')
-          .where('examId', isEqualTo: examId)
+          .where('maDeThi', isEqualTo: examId) // <--- QUAN TRỌNG LÀ DÒNG NÀY
           .get();
 
       List<Map<String, dynamic>> questions = [];
       for (var doc in qSnapshot.docs) {
         var qData = doc.data() as Map<String, dynamic>;
         qData['questionId'] = doc.id;
-
-        // BƯỚC 2: Làm sạch dữ liệu từng câu hỏi
         questions.add(_sanitizeData(qData));
+      }
+
+      // THÊM CHỐT CHẶN: Nếu truy vấn không ra câu hỏi nào -> Hủy tải và báo lỗi
+      if (questions.isEmpty) {
+        debugPrint(
+          'Lỗi: Đề thi này trên Firebase chưa có câu hỏi nào (Hoặc sai tên trường maDeThi).',
+        );
+        return false;
       }
 
       Map<String, dynamic> offlinePackage = {
