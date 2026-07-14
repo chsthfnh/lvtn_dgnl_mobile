@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-
 import '../../auth/login_screen.dart';
 import 'import_questions_screen.dart';
 import 'import_images_screen.dart';
@@ -10,6 +9,7 @@ import 'question_bank_screen.dart';
 import 'create_exam_screen.dart';
 import 'exam_list_screen.dart';
 import '../user_screens/dashboard_screen.dart';
+import 'admin_send_notification_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -474,6 +474,23 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               },
             ),
             const SizedBox(height: 24),
+            // --- NÚT MỚI THÊM: GỬI THÔNG BÁO PUSH ---
+            const SizedBox(height: 12),
+            _buildActionCard(
+              title: 'Push Notification',
+              subtitle: 'Bắn thông báo xuống điện thoại',
+              icon: Icons.send_to_mobile,
+              isPrimary: true, // Đổi thành true để nút có màu xanh nổi bật
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const AdminSendNotificationScreen(),
+                  ),
+                );
+              },
+            ),
+            // ----------------------------------------
 
             // --- ĐÃ THAY THẾ: GIAO DIỆN GIÁM SÁT HOẠT ĐỘNG THAY CHO TOTAL STUDENTS ---
             _buildUserActivitySection(),

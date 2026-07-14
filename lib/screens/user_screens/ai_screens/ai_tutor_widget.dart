@@ -2,7 +2,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import '../../../services/ai_tutor_service.dart';
-// Đảm bảo đường dẫn tới globals.dart của bạn là chính xác
 import '../../globals.dart';
 
 // =========================================================

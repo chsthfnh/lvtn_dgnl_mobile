@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:typed_data'; // THÊM thư viện này để dùng Uint8List (Byte)
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -22,7 +22,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late TextEditingController _dobCtrl;
   String _gender = 'Nam';
 
-  File? _newAvatarImage;
+  // SỬA: Đổi từ File sang Uint8List để hỗ trợ cả Web và Mobile
+  Uint8List? _newAvatarBytes;
   bool _isLoading = false;
 
   @override
@@ -40,7 +41,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       source: ImageSource.gallery,
     );
     if (pickedFile != null) {
-      setState(() => _newAvatarImage = File(pickedFile.path));
+      // SỬA: Đọc dữ liệu ảnh dưới dạng mảng Byte an toàn
+      final bytes = await pickedFile.readAsBytes();
+      setState(() => _newAvatarBytes = bytes);
     }
   }
 
@@ -67,13 +70,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     String avatarUrl = widget.userData['avatarUrl'] ?? '';
 
     try {
-      // 1. Nếu có chọn ảnh mới -> Upload lên Storage
-      if (_newAvatarImage != null) {
+      // 1. Nếu có chọn ảnh mới -> Upload mảng Byte lên Storage (Chạy tốt trên cả Web/App)
+      if (_newAvatarBytes != null) {
         Reference ref = FirebaseStorage.instance
             .ref()
             .child('UserAvatars')
             .child('$uid.jpg');
-        await ref.putFile(_newAvatarImage!);
+        await ref.putData(_newAvatarBytes!); // Dùng putData thay vì putFile
         avatarUrl = await ref.getDownloadURL();
       }
 
@@ -140,13 +143,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           CircleAvatar(
                             radius: 50,
                             backgroundColor: Colors.grey.shade200,
-                            backgroundImage: _newAvatarImage != null
-                                ? FileImage(_newAvatarImage!) as ImageProvider
+                            // SỬA: Dùng MemoryImage thay cho FileImage
+                            backgroundImage: _newAvatarBytes != null
+                                ? MemoryImage(_newAvatarBytes!) as ImageProvider
                                 : (currentAvatar.isNotEmpty
                                       ? NetworkImage(currentAvatar)
                                       : null),
                             child:
-                                (_newAvatarImage == null &&
+                                (_newAvatarBytes == null &&
                                     currentAvatar.isEmpty)
                                 ? const Icon(
                                     Icons.person,

@@ -7,6 +7,7 @@ import 'package:excel/excel.dart' hide Border;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:path_provider/path_provider.dart'; // Thêm để tìm thư mục lưu file
 import 'package:open_file/open_file.dart'; // Thêm để kích hoạt mở file Excel
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class ImportQuestionsScreen extends StatefulWidget {
   const ImportQuestionsScreen({super.key});
@@ -27,6 +28,19 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
 
   // --- HÀM TẢI VÀ LƯU FILE RA THƯ MỤC DOWNLOADS CỦA MÁY ---
   Future<void> _downloadTemplate() async {
+    if (kIsWeb) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Tính năng tải file mẫu hiện chưa hỗ trợ trên Web. Vui lòng sử dụng App điện thoại.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return; // Dừng hàm ngay lập tức
+    }
     try {
       // 1. Đọc dữ liệu từ assets
       final byteData = await rootBundle.load(
@@ -93,9 +107,12 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
         var pickedFile = result.files.single;
         String fileName = pickedFile.name;
 
-        // --- CƠ CHẾ ĐỌC FILE AN TOÀN 100% ---
+        // --- CƠ CHẾ ĐỌC FILE AN TOÀN ---
         List<int>? bytes = pickedFile.bytes;
 
+        if (bytes == null && !kIsWeb && pickedFile.path != null) {
+          bytes = File(pickedFile.path!).readAsBytesSync();
+        }
         // Nếu bytes bị rỗng (xảy ra trên vài máy Android cũ), ta mới dùng đường dẫn dự phòng
         if (bytes == null && pickedFile.path != null) {
           bytes = File(pickedFile.path!).readAsBytesSync();

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class ImportImagesScreen extends StatefulWidget {
   const ImportImagesScreen({super.key});
@@ -27,11 +28,12 @@ class _ImportImagesScreenState extends State<ImportImagesScreen> {
   Future<void> _pickImages() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
-        // SỬA Ở ĐÂY: Chuyển từ FileType.image sang FileType.custom
+        // Chuyển từ FileType.image sang FileType.custom
         type: FileType.custom,
         // Bắt buộc chỉ định các đuôi file được phép chọn
         allowedExtensions: ['png', 'jpg', 'jpeg'],
         allowMultiple: true,
+        withData: true,
       );
 
       if (result != null) {
@@ -77,7 +79,6 @@ class _ImportImagesScreenState extends State<ImportImagesScreen> {
       });
 
       try {
-        File imageFile = File(file.path!);
         String fileName = file.name;
 
         // Đường dẫn trên Firebase
@@ -111,7 +112,16 @@ class _ImportImagesScreenState extends State<ImportImagesScreen> {
           _uploadResults[i]['subtitle'] = 'Đang đẩy lên server...';
         });
 
-        await ref.putFile(imageFile);
+        // --- SỬA ĐOẠN NÀY ĐỂ HỖ TRỢ WEB ---
+        if (kIsWeb) {
+          // Xử lý kiểu Web (Dùng mảng byte)
+          await ref.putData(file.bytes!);
+        } else {
+          // Xử lý kiểu App (Dùng đường dẫn file)
+          File imageFile = File(file.path!);
+          await ref.putFile(imageFile);
+        }
+        // -----------------------------------
 
         // Upload thành công
         setState(() {

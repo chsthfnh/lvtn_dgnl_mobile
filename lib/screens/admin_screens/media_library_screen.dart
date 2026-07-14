@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class MediaLibraryScreen extends StatefulWidget {
   const MediaLibraryScreen({super.key});
@@ -72,6 +73,7 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.image,
         allowMultiple: true, // Cho phép chọn nhiều ảnh cùng lúc
+        withData: true,
       );
 
       if (result == null) return;
@@ -81,7 +83,6 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
 
       for (var file in result.files) {
         String fileName = file.name;
-        File imageFile = File(file.path!);
 
         Reference ref = FirebaseStorage.instance.ref().child(
           'QuestionImages/$fileName',
@@ -95,8 +96,12 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
         } catch (_) {
           // Báo lỗi nghĩa là file chưa tồn tại -> An toàn để upload
         }
-
-        await ref.putFile(imageFile);
+        if (kIsWeb) {
+          await ref.putData(file.bytes!); // Web
+        } else {
+          File imageFile = File(file.path!);
+          await ref.putFile(imageFile); // App
+        }
       }
 
       // Load lại thư viện sau khi up xong

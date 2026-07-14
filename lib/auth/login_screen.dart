@@ -7,6 +7,7 @@ import 'register_screen.dart';
 import 'forgot_password_screen.dart';
 import '../screens/user_screens/dashboard_screen.dart';
 import '../screens/admin_screens/admin_dashboard_screen.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -77,93 +78,140 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // --- HÀM 2: ĐĂNG NHẬP BẰNG GOOGLE (LUỒNG CHUẨN: CHECK TRƯỚC KHI AUTH) ---
+  // --- HÀM 2: ĐĂNG NHẬP BẰNG GOOGLE (TÁCH LUỒNG WEB & MOBILE) ---
   Future<void> _signInWithGoogle() async {
     setState(() => _isLoading = true);
     try {
-      // 1. KHÔI PHỤC CÚ PHÁP GỐC CỦA BẠN ĐỂ GỌI GOOGLE
-      final googleSignIn = GoogleSignIn.instance;
-      await googleSignIn.initialize();
+      if (kIsWeb) {
+        // ==========================================
+        // 1. LUỒNG DÀNH CHO WEB (Không dùng thư viện ngoài)
+        // ==========================================
+        GoogleAuthProvider authProvider = GoogleAuthProvider();
 
-      final GoogleSignInAccount? googleUser = await googleSignIn.authenticate();
-      if (googleUser == null) {
-        setState(() => _isLoading = false);
-        return; // Người dùng bấm hủy
-      }
+        UserCredential userCredential = await _auth.signInWithPopup(
+          authProvider,
+        );
+        User? user = userCredential.user;
 
-      // 2. Lấy email vừa chọn đi kiểm tra trong collection 'Users' của Firestore
-      var userQuery = await FirebaseFirestore.instance
-          .collection('Users')
-          .where('email', isEqualTo: googleUser.email)
-          .limit(1)
-          .get();
-
-      if (userQuery.docs.isEmpty) {
-        // KHÔNG HỢP LỆ: Email chưa được đăng ký -> Ép xuất khỏi Google và báo lỗi
-        await googleSignIn.signOut();
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text(
-                'Tài khoản này chưa đăng ký. Vui lòng tạo tài khoản!',
-                style: TextStyle(fontSize: 15),
-              ),
-              backgroundColor: Colors.red[800],
-              duration: const Duration(seconds: 5),
-              action: SnackBarAction(
-                label: 'ĐĂNG KÝ NGAY',
-                textColor: Colors.yellowAccent,
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const RegisterScreen(),
-                    ),
-                  );
-                },
-              ),
-            ),
-          );
+        if (user == null) {
+          setState(() => _isLoading = false);
+          return;
         }
-        return; // Cắt luồng, tuyệt đối không tạo tài khoản Firebase Auth
+
+        // Giữ nguyên logic bảo mật: Kiểm tra xem email đã được Admin duyệt/đăng ký chưa
+        var userQuery = await FirebaseFirestore.instance
+            .collection('Users')
+            .where('email', isEqualTo: user.email)
+            .limit(1)
+            .get();
+
+        if (userQuery.docs.isEmpty) {
+          // TÀI KHOẢN CHƯA ĐĂNG KÝ -> Xóa account nháp vừa tạo và văng ra ngoài
+          await user.delete();
+          await _auth.signOut();
+          _showUnregisteredError();
+          return;
+        }
+
+        // Hợp lệ -> Chuyển trang
+        if (mounted) await _checkRoleAndNavigate();
+      } else {
+        // ==========================================
+        // 2. LUỒNG DÀNH CHO ĐIỆN THOẠI (Android/iOS)
+        // ==========================================
+        // google_sign_in >=7.0.0: GoogleSignIn là singleton, phải initialize()
+        // trước khi dùng, và signIn() đã đổi tên thành authenticate().
+        final GoogleSignIn googleSignIn = GoogleSignIn.instance;
+        await googleSignIn.initialize();
+
+        final GoogleSignInAccount googleUser = await googleSignIn.authenticate(
+          scopeHint: ['email'],
+        );
+
+        // Kiểm tra Database TRƯỚC KHI kết nối Firebase Auth
+        var userQuery = await FirebaseFirestore.instance
+            .collection('Users')
+            .where('email', isEqualTo: googleUser.email)
+            .limit(1)
+            .get();
+
+        if (userQuery.docs.isEmpty) {
+          await googleSignIn.signOut();
+          _showUnregisteredError();
+          return;
+        }
+
+        // HỢP LỆ -> Cấp phép Auth
+        // Từ v7, accessToken không còn nằm trong `authentication` nữa,
+        // phải xin quyền (authorize) riêng qua authorizationClient.
+        final GoogleSignInClientAuthorization authorization = await googleUser
+            .authorizationClient
+            .authorizeScopes(['email']);
+
+        final AuthCredential credential = GoogleAuthProvider.credential(
+          idToken: googleUser.authentication.idToken,
+          accessToken: authorization.accessToken,
+        );
+
+        await _auth.signInWithCredential(credential);
+
+        if (mounted) await _checkRoleAndNavigate();
       }
-
-      // 3. HỢP LỆ: Tài khoản đã có trong Database -> Tiến hành cấp phép Firebase Auth
-      final GoogleSignInAuthentication googleAuth =
-          await googleUser.authentication;
-      final AuthCredential credential = GoogleAuthProvider.credential(
-        idToken: googleAuth.idToken, // Chỉ dùng idToken như code gốc của bạn
-      );
-
-      // Đăng nhập chính thức vào Firebase
-      await _auth.signInWithCredential(credential);
-
-      // Chuyển hướng vào app
-      if (mounted) await _checkRoleAndNavigate();
     } catch (e) {
-      if (mounted) {
-        if (!e.toString().contains('sign_in_canceled') &&
-            !e.toString().contains('canceled')) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Lỗi: $e')));
-        }
+      if (mounted &&
+          !e.toString().contains('canceled') &&
+          !e.toString().contains('popup-closed-by-user')) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Lỗi đăng nhập: $e')));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
+  // --- HÀM HỖ TRỢ: BÁO LỖI TÀI KHOẢN CHƯA ĐĂNG KÝ ---
+  void _showUnregisteredError() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text(
+          'Tài khoản này chưa đăng ký. Vui lòng tạo tài khoản!',
+          style: TextStyle(fontSize: 15),
+        ),
+        backgroundColor: Colors.red[800],
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: 'ĐĂNG KÝ NGAY',
+          textColor: Colors.yellowAccent,
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const RegisterScreen()),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   // --- HÀM 3: KIỂM TRA QUYỀN VÀ CHUYỂN TRANG ---
   Future<void> _checkRoleAndNavigate() async {
     if (!mounted) return;
 
-    // --- BẮT ĐẦU ĐOẠN LƯU LỊCH SỬ THIẾT BỊ BỔ SUNG ---
+    // --- BẮT ĐẦU ĐOẠN LƯU LỊCH SỬ THIẾT BỊ ---
     try {
-      String deviceName = Platform.isAndroid
-          ? 'Điện thoại Android'
-          : (Platform.isIOS ? 'Điện thoại iOS' : 'Trình duyệt Web');
+      String deviceName = 'Thiết bị không xác định';
+
+      // Kiểm tra xem có đang chạy trên Web không trước khi gọi Platform (Fix lỗi crash Web)
+      if (kIsWeb) {
+        deviceName = 'Trình duyệt Web';
+      } else {
+        deviceName = Platform.isAndroid
+            ? 'Điện thoại Android'
+            : (Platform.isIOS ? 'Điện thoại iOS' : 'Thiết bị khác');
+      }
+
       await FirebaseFirestore.instance
           .collection('Users')
           .doc(_auth.currentUser!.uid)
@@ -341,7 +389,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         backgroundColor: const Color(0xFF1A237E), // Xanh đậm
                         foregroundColor: Colors.white,
                       ),
-                      onPressed: _loginWithEmail, // Gắn logic Đăng nhập thường
+                      onPressed: _loginWithEmail,
                       child: const Text(
                         'Đăng nhập',
                         style: TextStyle(
@@ -367,7 +415,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
               // Nút Google
               _isLoading
-                  ? const SizedBox.shrink() // Ẩn nút Google khi đang tải
+                  ? const SizedBox.shrink()
                   : OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 16),
@@ -376,8 +424,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         side: BorderSide(color: Colors.grey[300]!),
                       ),
-                      onPressed:
-                          _signInWithGoogle, // Gắn logic Đăng nhập Google đã sửa
+                      onPressed: _signInWithGoogle,
                       icon: Image.asset('assets/gg.png', height: 24),
                       label: const Text(
                         'Đăng nhập bằng Google',

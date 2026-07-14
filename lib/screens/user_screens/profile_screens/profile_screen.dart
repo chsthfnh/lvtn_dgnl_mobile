@@ -5,6 +5,9 @@ import '../../../auth/login_screen.dart';
 import 'edit_profile_screen.dart';
 import 'change_password_screen.dart';
 import 'device_history_screen.dart';
+import 'notification_settings_screen.dart';
+import 'help_support_screen.dart';
+import 'about_app_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -158,18 +161,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     _buildMenuItem(
                       Icons.notifications_none,
                       'Cài đặt thông báo',
-                      () => _showComingSoon(),
+                      () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                const NotificationSettingsScreen(),
+                          ),
+                        );
+                      },
                     ),
-                    _buildMenuItem(
-                      Icons.help_outline,
-                      'Trợ giúp & Hỗ trợ',
-                      () => _showComingSoon(),
-                    ),
-                    _buildMenuItem(
-                      Icons.info_outline,
-                      'Về ứng dụng',
-                      () => _showComingSoon(),
-                    ),
+                    _buildMenuItem(Icons.help_outline, 'Trợ giúp & Hỗ trợ', () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const HelpSupportScreen(),
+                        ),
+                      );
+                    }),
+                    _buildMenuItem(Icons.info_outline, 'Về ứng dụng', () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const AboutAppScreen(),
+                        ),
+                      );
+                    }),
                   ]),
 
                   const SizedBox(height: 32),
@@ -206,12 +223,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _showComingSoon() {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Tính năng đang phát triển!')));
-  }
-
   Widget _buildMenuSection(String title, List<Widget> items) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -225,11 +236,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ),
         const SizedBox(height: 12),
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
+        Material(
+          color: Colors.white,
+          clipBehavior: Clip.antiAlias,
+          shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.grey.shade200),
+            side: BorderSide(color: Colors.grey.shade200),
           ),
           child: Column(children: items),
         ),
