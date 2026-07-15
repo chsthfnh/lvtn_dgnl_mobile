@@ -54,7 +54,7 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
   @override
   void initState() {
     super.initState();
-    // Khởi tạo mặc định
+    // Khởi tạo mặc định - Ép vào "Tiếng Việt" vì Vượt ải không cho chọn "Tất cả"
     _selectedPhanThi = 'Sử dụng ngôn ngữ';
     _selectedChuDe = 'Tiếng Việt';
     _fetchUserProgress();
@@ -120,12 +120,13 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
                 _currentLevel = 1;
                 _isLoading = false;
               });
-              if (mounted)
+              if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('Đã reset tiến trình thành công!'),
                   ),
                 );
+              }
             },
             child: const Text(
               'Xác nhận Reset',
@@ -147,11 +148,10 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
     if (_isLevelMode) {
       await _startLevelPractice();
     } else {
-      await _startFreePractice(); // Gọi lại hàm cũ của bạn
+      await _startFreePractice();
     }
   }
 
-  // LUỒNG MỚI: BỐC CÂU HỎI THEO LEVEL
   // LUỒNG MỚI: BỐC CÂU HỎI THEO LEVEL
   Future<void> _startLevelPractice() async {
     setState(() => _isLoading = true);
@@ -167,7 +167,6 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
             .round();
     int hardNeeded = totalNeeded - easyNeeded - medNeeded;
 
-    // --- ĐƯA BIẾN RA PHẠM VI HÀM CHA Ở ĐÂY ---
     List<DocumentSnapshot> finalQuestions = [];
     List<String> shortageMessages = [];
 
@@ -185,26 +184,13 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
 
       var snap = await query.get();
 
-      // LỌC: khớp độ khó KHÔNG phân biệt hoa/thường và khoảng trắng thừa
-      // (tránh lỗi lệch chính tả kiểu "Trung Bình" vs "Trung bình" trong Firestore)
       String normalize(String s) => s.trim().toLowerCase();
       var availableDocs = snap.docs.where((doc) {
         var data = doc.data() as Map<String, dynamic>;
         String doKho = (data['doKho'] ?? '').toString();
         return normalize(doKho) == normalize(difficulty);
       }).toList();
-      // GHI CHÚ: KHÔNG lọc theo maDeThi ở đây - luyện tập được phép dùng
-      // mọi câu hỏi trong kho, kể cả câu đã được gán vào một đề thi thử.
-      // Việc loại trừ theo maDeThi chỉ áp dụng khi ADMIN tạo đề thi khác
-      // (tránh 1 câu bị trùng ở 2 đề thi), không áp dụng cho luyện tập.
 
-      // --- DEBUG: xem thực tế Firestore trả về bao nhiêu câu ---
-      debugPrint(
-        '[DEBUG] phanThi=$_selectedPhanThi | chuDe=$_selectedChuDe | doKho=$difficulty '
-        '=> tổng theo phanThi/chuDe: ${snap.docs.length} câu, khớp độ khó: ${availableDocs.length} câu, cần $requiredCount câu',
-      );
-
-      // Tách câu chùm (cụm) và câu lẻ
       Map<String, List<DocumentSnapshot>> grouped = {};
       List<DocumentSnapshot> singles = [];
 
@@ -223,14 +209,7 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
       allBlocks.addAll(singles.map((e) => [e]));
       allBlocks.shuffle();
 
-      // THUẬT TOÁN MỚI - ĐƠN GIẢN & LUÔN ƯU TIÊN ĐỦ SỐ LƯỢNG:
-      // Ưu tiên các block vừa khít trước để hạn chế dư thừa, nhưng nếu
-      // không còn cách nào khác thì CỨ LẤY NGUYÊN CẢ CỤM dù bị lố một ít,
-      // miễn sao đạt đủ requiredCount. Chỉ báo thiếu khi lấy HẾT SẠCH kho
-      // (toàn bộ availableDocs) mà vẫn không đủ.
       int currentCount = 0;
-
-      // 1. Lấy các block (cụm hoặc câu lẻ) nào vừa khít mà không làm lố, ưu tiên trước
       List<List<DocumentSnapshot>> remaining = [];
       for (var block in allBlocks) {
         if (currentCount + block.length <= requiredCount) {
@@ -241,7 +220,6 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
         }
       }
 
-      // 2. Nếu vẫn còn thiếu, LẤY NGUYÊN CỤM còn lại (cho phép lố) cho đến khi đủ
       remaining.shuffle();
       for (var block in remaining) {
         if (currentCount >= requiredCount) break;
@@ -249,7 +227,6 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
         currentCount += block.length;
       }
 
-      // 3. Chỉ báo thiếu khi đã lấy HẾT toàn bộ kho rảnh mà vẫn không đủ
       if (currentCount < requiredCount) {
         shortageMessages.add(
           '• Độ khó "$difficulty": Cần $requiredCount câu, kho rảnh chỉ ghép được tối đa $currentCount câu (có ${availableDocs.length} câu lẻ/cụm khả dụng)',
@@ -258,12 +235,10 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
     }
 
     try {
-      // 2. Thực thi bốc 3 loại độ khó
       await fetchByDifficulty('Dễ', easyNeeded);
       await fetchByDifficulty('Trung bình', medNeeded);
       await fetchByDifficulty('Khó', hardNeeded);
 
-      // 3. Xử lý kết quả
       if (shortageMessages.isNotEmpty) {
         setState(() => _isLoading = false);
         _showDetailedShortageDialog(
@@ -283,15 +258,16 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
     }
   }
 
-  // LUỒNG CŨ: TỰ DO (Giữ nguyên logic của bạn)
+  // LUỒNG CŨ: TỰ DO
   Future<void> _startFreePractice() async {
     setState(() => _isLoading = true);
     try {
       Query query = FirebaseFirestore.instance
           .collection('Questions')
           .where('phanThi', isEqualTo: _selectedPhanThi);
-      if (_selectedChuDe != 'Tất cả')
+      if (_selectedChuDe != 'Tất cả') {
         query = query.where('chuDe', isEqualTo: _selectedChuDe);
+      }
 
       var snap = await query.get();
       var docs = snap.docs;
@@ -490,6 +466,13 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
                             children:
                                 (_subjects[_selectedPhanThi]!['subs']
                                         as List<String>)
+                                    // ĐÃ THÊM LOGIC: Ẩn "Tất cả" nếu ở chế độ Vượt ải (trừ Toán học vốn chỉ có "Tất cả")
+                                    .where(
+                                      (sub) =>
+                                          !(_isLevelMode &&
+                                              sub == 'Tất cả' &&
+                                              _selectedPhanThi != 'Toán học'),
+                                    )
                                     .map((sub) => _buildSubTopicChip(sub))
                                     .toList(),
                           ),
@@ -577,7 +560,18 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
         children: [
           Expanded(
             child: GestureDetector(
-              onTap: () => setState(() => _isLevelMode = true),
+              onTap: () {
+                setState(() {
+                  _isLevelMode = true;
+                  // ĐÃ THÊM LOGIC: Nếu chuyển sang Vượt ải mà đang chọn "Tất cả", thì nhảy sang mục con đầu tiên
+                  if (_selectedChuDe == 'Tất cả' &&
+                      _selectedPhanThi != 'Toán học') {
+                    _selectedChuDe = _subjects[_selectedPhanThi]!['subs']
+                        .firstWhere((sub) => sub != 'Tất cả');
+                    _fetchUserProgress();
+                  }
+                });
+              },
               child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 decoration: BoxDecoration(
@@ -743,8 +737,15 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
       onTap: () {
         setState(() {
           _selectedPhanThi = title;
-          _selectedChuDe = 'Tất cả';
-          _fetchUserProgress(); // Load lại level mỗi khi đổi môn
+          // ĐÃ THÊM LOGIC: Ép không cho chọn "Tất cả" khi bấm qua lại giữa các môn lúc Vượt ải
+          if (_isLevelMode && title != 'Toán học') {
+            _selectedChuDe = _subjects[title]!['subs'].firstWhere(
+              (sub) => sub != 'Tất cả',
+            );
+          } else {
+            _selectedChuDe = 'Tất cả';
+          }
+          _fetchUserProgress();
         });
       },
       borderRadius: BorderRadius.circular(16),
@@ -786,7 +787,7 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
       onTap: () {
         setState(() {
           _selectedChuDe = label;
-          _fetchUserProgress(); // Load lại level mỗi khi đổi chủ đề
+          _fetchUserProgress();
         });
       },
       borderRadius: BorderRadius.circular(20),

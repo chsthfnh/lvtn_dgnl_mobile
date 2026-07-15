@@ -1,12 +1,11 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'
-    show rootBundle; // Thêm để đọc file từ assets
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:file_picker/file_picker.dart';
 import 'package:excel/excel.dart' hide Border;
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:path_provider/path_provider.dart'; // Thêm để tìm thư mục lưu file
-import 'package:open_file/open_file.dart'; // Thêm để kích hoạt mở file Excel
+import 'package:path_provider/path_provider.dart';
+import 'package:open_file/open_file.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 class ImportQuestionsScreen extends StatefulWidget {
@@ -22,11 +21,11 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
 
   final List<Map<String, dynamic>> _uploadedFiles = [];
 
-  // Biến lưu tạm danh sách câu hỏi đã đọc hợp lệ, chờ bấm nút để đẩy lên Firebase
+  // Chứa TẤT CẢ câu hỏi từ các file hợp lệ
   List<Map<String, dynamic>> _pendingQuestions = [];
-  bool _isUploading = false; // Trạng thái khóa nút khi đang upload
+  bool _isUploading = false;
 
-  // --- HÀM TẢI VÀ LƯU FILE RA THƯ MỤC DOWNLOADS CỦA MÁY ---
+  // --- HÀM 1: TẢI TỆP MẪU ---
   Future<void> _downloadTemplate() async {
     if (kIsWeb) {
       if (mounted) {
@@ -39,28 +38,21 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
           ),
         );
       }
-      return; // Dừng hàm ngay lập tức
+      return;
     }
     try {
-      // 1. Đọc dữ liệu từ assets
       final byteData = await rootBundle.load(
         'assets/templates/excel_template.xlsx',
       );
-
-      // 2. Xác định thư mục Tải về (Downloads) công khai
       String savePath = '';
       if (Platform.isAndroid) {
-        // Đường dẫn chuẩn xác nhất tới thư mục Downloads trên mọi máy Android
         savePath = '/storage/emulated/0/Download/excel_template.xlsx';
       } else {
-        // Cho iOS (Apple bảo mật file khắt khe hơn nên lưu vào Documents của App)
         final directory = await getApplicationDocumentsDirectory();
         savePath = '${directory.path}/excel_template.xlsx';
       }
 
       final file = File(savePath);
-
-      // 3. Ghi dữ liệu ra file vật lý
       await file.writeAsBytes(
         byteData.buffer.asUint8List(
           byteData.offsetInBytes,
@@ -68,7 +60,6 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
         ),
       );
 
-      // Thông báo lưu thành công trước khi mở
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -79,8 +70,6 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
           ),
         );
       }
-
-      // 4. Mở file lên cho admin xem (nếu máy có cài app đọc Excel)
       await OpenFile.open(file.path);
     } catch (e) {
       if (mounted) {
@@ -94,153 +83,153 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
     }
   }
 
+  // --- HÀM 2: CHỌN VÀ ĐỌC NHIỀU FILE CÙNG LÚC ---
   Future<void> _pickAndParseFile() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['xlsx'],
-        withData:
-            true, // THÊM DÒNG NÀY: Bắt buộc để lấy dữ liệu (bytes) an toàn trên mọi thiết bị
+        withData: true,
+        allowMultiple: true, // ĐÃ BẬT: Cho phép chọn nhiều file
       );
 
       if (result != null) {
-        var pickedFile = result.files.single;
-        String fileName = pickedFile.name;
+        // VÒNG LẶP: Xử lý từng file được chọn
+        for (var pickedFile in result.files) {
+          String fileName = pickedFile.name;
 
-        // --- CƠ CHẾ ĐỌC FILE AN TOÀN ---
-        List<int>? bytes = pickedFile.bytes;
-
-        if (bytes == null && !kIsWeb && pickedFile.path != null) {
-          bytes = File(pickedFile.path!).readAsBytesSync();
-        }
-        // Nếu bytes bị rỗng (xảy ra trên vài máy Android cũ), ta mới dùng đường dẫn dự phòng
-        if (bytes == null && pickedFile.path != null) {
-          bytes = File(pickedFile.path!).readAsBytesSync();
-        }
-
-        // Nếu vẫn không có dữ liệu thì báo lỗi ra màn hình
-        if (bytes == null) {
-          throw Exception("Hệ thống không thể trích xuất dữ liệu từ file này.");
-        }
-
-        // Reset dữ liệu tạm cũ nếu có
-        _pendingQuestions.clear();
-
-        setState(() {
-          _uploadedFiles.insert(0, {
+          // 1. Tạo trạng thái file và đẩy lên đầu danh sách UI
+          Map<String, dynamic> fileStatus = {
             'fileName': fileName,
             'status': 'processing',
-            'subtitle': 'Đang đọc dữ liệu từ file...',
-            'progress': null, // Chạy hiệu ứng load vô định
+            'subtitle': 'Đang đọc dữ liệu...',
+            'progress': null,
             'errors': <String>[],
+          };
+
+          setState(() {
+            _uploadedFiles.insert(0, fileStatus);
           });
-        });
 
-        // Đọc dữ liệu từ biến bytes an toàn thay vì đọc từ File(path)
-        var excel = Excel.decodeBytes(bytes);
+          // 2. Trích xuất Bytes an toàn
+          List<int>? bytes = pickedFile.bytes;
+          if (bytes == null && !kIsWeb && pickedFile.path != null) {
+            bytes = File(pickedFile.path!).readAsBytesSync();
+          }
 
-        List<Map<String, dynamic>> questionsParsed = [];
-        List<String> errorLogs = [];
+          if (bytes == null) {
+            setState(() {
+              fileStatus['status'] = 'error';
+              fileStatus['subtitle'] = 'Không thể trích xuất dữ liệu.';
+            });
+            continue; // Bỏ qua file này, tiếp tục file khác
+          }
 
-        String firstSheet = excel.tables.keys.first;
-        var table = excel.tables[firstSheet];
+          // 3. Phân tích Excel
+          var excel = Excel.decodeBytes(bytes);
+          List<Map<String, dynamic>> questionsParsed = [];
+          List<String> errorLogs = [];
 
-        if (table != null) {
-          for (int i = 1; i < table.rows.length; i++) {
-            var row = table.rows[i];
+          String firstSheet = excel.tables.keys.first;
+          var table = excel.tables[firstSheet];
 
-            // KIỂM TRA AN TOÀN: Bỏ qua ngay nếu dòng không đủ độ dài hoặc không có nội dung câu hỏi
-            if (row.length <= 3 ||
-                row[3] == null ||
-                row[3]?.value == null ||
-                row[3]!.value.toString().trim().isEmpty) {
-              continue;
+          if (table != null) {
+            for (int i = 1; i < table.rows.length; i++) {
+              var row = table.rows[i];
+
+              if (row.length <= 3 ||
+                  row[3] == null ||
+                  row[3]?.value == null ||
+                  row[3]!.value.toString().trim().isEmpty) {
+                continue;
+              }
+
+              String maNhom = row[0]?.value?.toString() ?? "";
+              String noiDungChung = row.length > 1
+                  ? (row[1]?.value?.toString() ?? "")
+                  : "";
+              String anhChung = row.length > 2
+                  ? (row[2]?.value?.toString() ?? "")
+                  : "";
+              String questionText = row.length > 3
+                  ? (row[3]?.value?.toString() ?? "")
+                  : "";
+              String anhCauHoi = row.length > 4
+                  ? (row[4]?.value?.toString() ?? "")
+                  : "";
+              String ansA = row.length > 5
+                  ? (row[5]?.value?.toString() ?? "")
+                  : "";
+              String ansB = row.length > 6
+                  ? (row[6]?.value?.toString() ?? "")
+                  : "";
+              String ansC = row.length > 7
+                  ? (row[7]?.value?.toString() ?? "")
+                  : "";
+              String ansD = row.length > 8
+                  ? (row[8]?.value?.toString() ?? "")
+                  : "";
+              String correctAns = row.length > 9
+                  ? (row[9]?.value?.toString() ?? "")
+                  : "";
+              String explanation = row.length > 10
+                  ? (row[10]?.value?.toString() ?? "")
+                  : "";
+              String phanThi = row.length > 11
+                  ? (row[11]?.value?.toString() ?? "")
+                  : "";
+              String subject = row.length > 12
+                  ? (row[12]?.value?.toString() ?? "")
+                  : "";
+              String difficulty = row.length > 13
+                  ? (row[13]?.value?.toString() ?? "")
+                  : "";
+
+              if (questionText.isEmpty || correctAns.isEmpty) {
+                errorLogs.add("Dòng ${i + 1}: Thiếu câu hỏi hoặc đáp án đúng.");
+                continue;
+              }
+
+              questionsParsed.add({
+                'maNhom': maNhom,
+                'noiDungChung': noiDungChung,
+                'anhChung': anhChung,
+                'noiDungCauHoi': questionText,
+                'anhCauHoi': anhCauHoi,
+                'options': [ansA, ansB, ansC, ansD],
+                'correctAnswer': correctAns,
+                'loiGiai': explanation,
+                'phanThi': phanThi,
+                'chuDe': subject,
+                'doKho': difficulty,
+                'createdAt': FieldValue.serverTimestamp(),
+              });
             }
+          }
 
-            // Đọc chính xác 14 cột theo Index (từ 0 đến 13)
-            String maNhom = row[0]?.value?.toString() ?? "";
-            String noiDungChung = row.length > 1
-                ? (row[1]?.value?.toString() ?? "")
-                : "";
-            String anhChung = row.length > 2
-                ? (row[2]?.value?.toString() ?? "")
-                : "";
-            String questionText = row.length > 3
-                ? (row[3]?.value?.toString() ?? "")
-                : "";
-            String anhCauHoi = row.length > 4
-                ? (row[4]?.value?.toString() ?? "")
-                : "";
-            String ansA = row.length > 5
-                ? (row[5]?.value?.toString() ?? "")
-                : "";
-            String ansB = row.length > 6
-                ? (row[6]?.value?.toString() ?? "")
-                : "";
-            String ansC = row.length > 7
-                ? (row[7]?.value?.toString() ?? "")
-                : "";
-            String ansD = row.length > 8
-                ? (row[8]?.value?.toString() ?? "")
-                : "";
-            String correctAns = row.length > 9
-                ? (row[9]?.value?.toString() ?? "")
-                : "";
-            String explanation = row.length > 10
-                ? (row[10]?.value?.toString() ?? "")
-                : "";
-            String phanThi = row.length > 11
-                ? (row[11]?.value?.toString() ?? "")
-                : "";
-            String subject = row.length > 12
-                ? (row[12]?.value?.toString() ?? "")
-                : "";
-            String difficulty = row.length > 13
-                ? (row[13]?.value?.toString() ?? "")
-                : "";
-
-            if (questionText.isEmpty || correctAns.isEmpty) {
-              errorLogs.add("Dòng ${i + 1}: Thiếu câu hỏi hoặc đáp án đúng.");
-              continue;
-            }
-
-            questionsParsed.add({
-              'maNhom': maNhom,
-              'noiDungChung': noiDungChung,
-              'anhChung': anhChung,
-              'noiDungCauHoi': questionText,
-              'anhCauHoi': anhCauHoi,
-              'options': [ansA, ansB, ansC, ansD],
-              'correctAnswer': correctAns,
-              'loiGiai': explanation,
-              'phanThi': phanThi,
-              'chuDe': subject,
-              'doKho': difficulty,
-              'createdAt': FieldValue.serverTimestamp(),
+          // 4. Cập nhật UI riêng cho từng file sau khi đọc xong
+          if (errorLogs.isNotEmpty) {
+            setState(() {
+              fileStatus['status'] = 'error';
+              fileStatus['subtitle'] = errorLogs.first;
+              fileStatus['errors'] = errorLogs;
+            });
+          } else if (questionsParsed.isNotEmpty) {
+            setState(() {
+              _pendingQuestions.addAll(
+                questionsParsed,
+              ); // NỘI CỘNG dồn câu hỏi của file này vào danh sách tổng
+              fileStatus['status'] = 'ready';
+              fileStatus['subtitle'] =
+                  'Sẵn sàng Import ${questionsParsed.length} câu hỏi';
+              fileStatus['progress'] = 0.0;
+            });
+          } else {
+            setState(() {
+              fileStatus['status'] = 'error';
+              fileStatus['subtitle'] = 'File không có dữ liệu hợp lệ.';
             });
           }
-        }
-
-        // Cập nhật UI sau khi đọc xong
-        if (errorLogs.isNotEmpty) {
-          setState(() {
-            _uploadedFiles[0]['status'] = 'error';
-            _uploadedFiles[0]['subtitle'] = errorLogs.first;
-            _uploadedFiles[0]['errors'] = errorLogs;
-          });
-        } else if (questionsParsed.isNotEmpty) {
-          setState(() {
-            _pendingQuestions = questionsParsed; // Đưa vào hàng chờ
-            _uploadedFiles[0]['status'] = 'ready'; // Trạng thái sẵn sàng
-            _uploadedFiles[0]['subtitle'] =
-                'Sẵn sàng Import ${questionsParsed.length} câu hỏi';
-            _uploadedFiles[0]['progress'] = 0.0;
-          });
-        } else {
-          setState(() {
-            _uploadedFiles[0]['status'] = 'error';
-            _uploadedFiles[0]['subtitle'] = 'File không có dữ liệu hợp lệ.';
-          });
         }
       }
     } catch (e) {
@@ -252,41 +241,66 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
     }
   }
 
-  // --- BƯỚC 2: HÀM ĐẨY DỮ LIỆU LÊN FIREBASE (KHI BẤM NÚT) ---
+  // --- HÀM 3: ĐẨY TOÀN BỘ CÂU HỎI LÊN FIREBASE (CÓ CHIA NHỎ ĐỂ TRÁNH LỖI OVERLOAD) ---
   Future<void> _startImport() async {
     if (_pendingQuestions.isEmpty || _isUploading) return;
 
     setState(() {
       _isUploading = true;
-      _uploadedFiles[0]['status'] = 'processing';
-      _uploadedFiles[0]['subtitle'] = 'Đang đẩy lên hệ thống...';
-      _uploadedFiles[0]['progress'] = null;
+      // Chuyển trạng thái các file "Đang chờ" thành "Đang xử lý"
+      for (var file in _uploadedFiles) {
+        if (file['status'] == 'ready') {
+          file['status'] = 'processing';
+          file['subtitle'] = 'Đang đẩy lên hệ thống...';
+          file['progress'] = null;
+        }
+      }
     });
 
     try {
-      WriteBatch batch = FirebaseFirestore.instance.batch();
-      for (var question in _pendingQuestions) {
-        DocumentReference docRef = FirebaseFirestore.instance
-            .collection('Questions')
-            .doc();
-        batch.set(docRef, question);
+      // THUẬT TOÁN CHUNKING: Firebase chỉ cho phép WriteBatch tối đa 500 Docs.
+      // Cắt mảng _pendingQuestions ra từng cục 400 câu hỏi để gửi từ từ
+      int total = _pendingQuestions.length;
+      int chunkSize = 400;
+
+      for (int i = 0; i < total; i += chunkSize) {
+        WriteBatch batch = FirebaseFirestore.instance.batch();
+        int end = (i + chunkSize < total) ? i + chunkSize : total;
+        List<Map<String, dynamic>> chunk = _pendingQuestions.sublist(i, end);
+
+        for (var question in chunk) {
+          DocumentReference docRef = FirebaseFirestore.instance
+              .collection('Questions')
+              .doc();
+          batch.set(docRef, question);
+        }
+        await batch.commit(); // Đẩy cục dữ liệu lên
       }
-      await batch.commit();
 
       setState(() {
         _isUploading = false;
-        _uploadedFiles[0]['status'] = 'success';
-        _uploadedFiles[0]['subtitle'] =
-            'Hoàn tất • Đã thêm ${_pendingQuestions.length} câu hỏi';
-        _uploadedFiles[0]['progress'] = 1.0;
-        _pendingQuestions.clear(); // Xóa dữ liệu chờ sau khi import thành công
+        // Báo thành công cho các file đang xử lý
+        for (var file in _uploadedFiles) {
+          if (file['status'] == 'processing') {
+            file['status'] = 'success';
+            file['subtitle'] = 'Hoàn tất';
+            file['progress'] = 1.0;
+          }
+        }
+        _pendingQuestions
+            .clear(); // Xóa sạch bộ nhớ tạm sau khi upload xong toàn bộ
       });
     } catch (e) {
       setState(() {
         _isUploading = false;
-        _uploadedFiles[0]['status'] = 'error';
-        _uploadedFiles[0]['subtitle'] = 'Lỗi kết nối máy chủ.';
-        _uploadedFiles[0]['errors'] = [e.toString()];
+        // Báo lỗi cho các file đang xử lý
+        for (var file in _uploadedFiles) {
+          if (file['status'] == 'processing') {
+            file['status'] = 'error';
+            file['subtitle'] = 'Lỗi kết nối máy chủ.';
+            file['errors'] = [e.toString()];
+          }
+        }
       });
     }
   }
@@ -325,7 +339,6 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Kích hoạt nút khi có dữ liệu chờ và không trong quá trình upload
     bool isButtonEnabled = _pendingQuestions.isNotEmpty && !_isUploading;
 
     return Scaffold(
@@ -353,7 +366,6 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // --- 1. KHU VỰC TẢI TỆP MẪU ---
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -400,8 +412,7 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
                       side: BorderSide(color: Colors.grey.shade300),
                       foregroundColor: _primaryDark,
                     ),
-                    onPressed:
-                        _downloadTemplate, // FIX: Đã kết nối hàm tải tệp vật lý ở đây
+                    onPressed: _downloadTemplate,
                     icon: const Icon(Icons.download_outlined, size: 20),
                     label: const Text(
                       'Tải Excel Template',
@@ -413,11 +424,8 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
             ),
             const SizedBox(height: 24),
 
-            // --- 2. KHU VỰC KÉO THẢ UPLOAD ---
             GestureDetector(
-              onTap: _isUploading
-                  ? null
-                  : _pickAndParseFile, // Khóa nút chọn file khi đang upload
+              onTap: _isUploading ? null : _pickAndParseFile,
               child: Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(
@@ -456,7 +464,7 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Hỗ trợ định dạng .xlsx. Kích thước\ntối đa 10MB.',
+                      'Hỗ trợ .xlsx. Có thể chọn nhiều file cùng lúc.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 13,
@@ -470,9 +478,8 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
             ),
             const SizedBox(height: 32),
 
-            // --- 3. DANH SÁCH TỆP TẢI LÊN GẦN ĐÂY ---
             Text(
-              'TỆP TẢI LÊN GẦN ĐÂY',
+              'TỆP TẢI LÊN',
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.bold,
@@ -487,7 +494,7 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
                     child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 30.0),
                       child: Text(
-                        'Chưa có tệp nào được tải lên gần đây.',
+                        'Chưa có tệp nào được tải lên.',
                         style: TextStyle(
                           color: Colors.grey.shade500,
                           fontStyle: FontStyle.italic,
@@ -508,8 +515,6 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
           ],
         ),
       ),
-
-      // --- 4. NÚT BẮT ĐẦU IMPORT ---
       bottomNavigationBar: Container(
         padding: const EdgeInsets.all(20),
         decoration: const BoxDecoration(color: Color(0xFFF8F9FA)),
@@ -532,7 +537,9 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
-                _isUploading ? 'Đang Import...' : 'Bắt đầu Import',
+                _isUploading
+                    ? 'Đang Import...'
+                    : 'Bắt đầu Import ${_pendingQuestions.length > 0 ? "(${_pendingQuestions.length} câu)" : ""}',
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -556,7 +563,6 @@ class _ImportQuestionsScreenState extends State<ImportQuestionsScreen> {
     );
   }
 
-  // --- WIDGET HELPER: Thẻ trạng thái từng tệp tin ---
   Widget _buildFileStatusItem(Map<String, dynamic> file) {
     String status = file['status'];
     String fileName = file['fileName'];

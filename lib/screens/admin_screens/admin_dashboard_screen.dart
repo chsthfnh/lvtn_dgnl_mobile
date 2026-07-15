@@ -10,6 +10,7 @@ import 'create_exam_screen.dart';
 import 'exam_list_screen.dart';
 import '../user_screens/dashboard_screen.dart';
 import 'admin_send_notification_screen.dart';
+import 'admin_ai_template_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -278,10 +279,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         elevation: 0,
         iconTheme: const IconThemeData(color: Colors.black87),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.search, color: Colors.black87),
-            onPressed: () {},
-          ),
           Stack(
             alignment: Alignment.center,
             children: [
@@ -389,7 +386,41 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 );
               },
             ),
-            const Divider(),
+
+            // 1. Quản lý Template AI
+            ListTile(
+              leading: Icon(Icons.auto_awesome_mosaic, color: _primaryDark),
+              title: const Text(
+                'Quản lý Template AI',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const AdminAITemplateScreen(),
+                  ),
+                );
+              },
+            ),
+
+            // 2. Quản lý Lịch sử thông báo (Sửa/Xóa)
+            ListTile(
+              leading: Icon(Icons.campaign_outlined, color: _primaryDark),
+              title: const Text(
+                'Lịch sử thông báo',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              onTap: () {
+                Navigator.pop(context); // Đóng menu trượt lại
+                _showAdminNotificationPanel(); // Mở cái popup có sẵn của bạn lên
+              },
+            ),
+
+            // ==========================================
+            const Divider(), // Đường kẻ ngang
+
             ListTile(
               leading: const Icon(
                 Icons.remove_red_eye_outlined,
@@ -490,18 +521,24 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 );
               },
             ),
-            // ----------------------------------------
 
-            // --- ĐÃ THAY THẾ: GIAO DIỆN GIÁM SÁT HOẠT ĐỘNG THAY CHO TOTAL STUDENTS ---
+            //Sinh câu hỏi bằng AI
             _buildUserActivitySection(),
 
             const SizedBox(height: 16),
-            _buildStatCard(
-              title: 'Total Exams',
-              value: '342',
-              trendValue: '+ 8%',
-              icon: Icons.assignment_outlined,
-              showChart: false,
+            _buildActionCard(
+              title: 'Quản lý Template Sinh Đề AI',
+              subtitle: 'Thêm/Sửa dữ liệu mẫu cho các môn học',
+              icon: Icons.auto_awesome, // Dùng icon ngôi sao lấp lánh của AI
+              isPrimary: false, // Để màu nền trắng cho đồng bộ giao diện
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const AdminAITemplateScreen(),
+                  ),
+                );
+              },
             ),
             const SizedBox(height: 30),
           ],
@@ -936,106 +973,106 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  Widget _buildStatCard({
-    required String title,
-    required String value,
-    required String trendValue,
-    required IconData icon,
-    required bool showChart,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF0F4FA),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, color: _primaryDark, size: 24),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.green.shade50,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.arrow_upward,
-                      size: 14,
-                      color: Colors.green.shade700,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      trendValue,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green.shade700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Text(
-            title,
-            style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: _primaryDark,
-            ),
-          ),
-          if (showChart) ...[
-            const SizedBox(height: 20),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _buildBar(0.2, Colors.grey.shade300),
-                _buildBar(0.4, Colors.blueGrey.shade300),
-                _buildBar(0.3, Colors.blueGrey.shade400),
-                _buildBar(0.6, Colors.blueGrey.shade500),
-                _buildBar(0.9, _primaryDark),
-                _buildBar(0.7, _primaryDark.withValues(alpha: 0.8)),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
+  // Widget _buildStatCard({
+  //   required String title,
+  //   required String value,
+  //   required String trendValue,
+  //   required IconData icon,
+  //   required bool showChart,
+  // }) {
+  //   return Container(
+  //     padding: const EdgeInsets.all(20),
+  //     decoration: BoxDecoration(
+  //       color: Colors.white,
+  //       borderRadius: BorderRadius.circular(12),
+  //       border: Border.all(color: Colors.grey.shade200),
+  //     ),
+  //     child: Column(
+  //       crossAxisAlignment: CrossAxisAlignment.start,
+  //       children: [
+  //         Row(
+  //           mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  //           children: [
+  //             Container(
+  //               padding: const EdgeInsets.all(10),
+  //               decoration: BoxDecoration(
+  //                 color: const Color(0xFFF0F4FA),
+  //                 borderRadius: BorderRadius.circular(10),
+  //               ),
+  //               child: Icon(icon, color: _primaryDark, size: 24),
+  //             ),
+  //             Container(
+  //               padding: const EdgeInsets.symmetric(
+  //                 horizontal: 10,
+  //                 vertical: 4,
+  //               ),
+  //               decoration: BoxDecoration(
+  //                 color: Colors.green.shade50,
+  //                 borderRadius: BorderRadius.circular(20),
+  //               ),
+  //               child: Row(
+  //                 children: [
+  //                   Icon(
+  //                     Icons.arrow_upward,
+  //                     size: 14,
+  //                     color: Colors.green.shade700,
+  //                   ),
+  //                   const SizedBox(width: 4),
+  //                   Text(
+  //                     trendValue,
+  //                     style: TextStyle(
+  //                       fontSize: 12,
+  //                       fontWeight: FontWeight.bold,
+  //                       color: Colors.green.shade700,
+  //                     ),
+  //                   ),
+  //                 ],
+  //               ),
+  //             ),
+  //           ],
+  //         ),
+  //         const SizedBox(height: 16),
+  //         Text(
+  //           title,
+  //           style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+  //         ),
+  //         const SizedBox(height: 4),
+  //         Text(
+  //           value,
+  //           style: TextStyle(
+  //             fontSize: 24,
+  //             fontWeight: FontWeight.bold,
+  //             color: _primaryDark,
+  //           ),
+  //         ),
+  //         if (showChart) ...[
+  //           const SizedBox(height: 20),
+  //           Row(
+  //             crossAxisAlignment: CrossAxisAlignment.end,
+  //             mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  //             children: [
+  //               _buildBar(0.2, Colors.grey.shade300),
+  //               _buildBar(0.4, Colors.blueGrey.shade300),
+  //               _buildBar(0.3, Colors.blueGrey.shade400),
+  //               _buildBar(0.6, Colors.blueGrey.shade500),
+  //               _buildBar(0.9, _primaryDark),
+  //               _buildBar(0.7, _primaryDark.withValues(alpha: 0.8)),
+  //             ],
+  //           ),
+  //         ],
+  //       ],
+  //     ),
+  //   );
+  // }
 
-  Widget _buildBar(double heightFactor, Color color) {
-    return Container(
-      width: 40,
-      height: 80 * heightFactor,
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
-      ),
-    );
-  }
+  //   Widget _buildBar(double heightFactor, Color color) {
+  //     return Container(
+  //       width: 40,
+  //       height: 80 * heightFactor,
+  //       decoration: BoxDecoration(
+  //         color: color,
+  //         borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+  //       ),
+  //     );
+  //   }
 }

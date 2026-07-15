@@ -41,6 +41,8 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
   bool _shuffleQuestions = true;
   bool _shuffleOptions = true;
   bool _isPublic = false;
+  bool _isChecking =
+      false; // MỚI: Biến trạng thái để khóa nút khi đang kiểm tra trùng lặp
 
   @override
   void initState() {
@@ -78,7 +80,7 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
   }
 
   // --- HÀM XỬ LÝ CHUYỂN BƯỚC TIẾP THEO ---
-  void _handleNextStep({bool saveAsDraft = false}) {
+  Future<void> _handleNextStep({bool saveAsDraft = false}) async {
     if (_formKey.currentState!.validate()) {
       if (_strategy == 'random' && _totalQuestions != 120) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -92,47 +94,120 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
         return;
       }
 
-      // Nút Lưu Bản Nháp sẽ ép isPublic = false
-      if (saveAsDraft) _isPublic = false;
+      setState(() => _isChecking = true); // Bật hiệu ứng loading
 
-      // Gom dữ liệu (Giữ lại số liệu thống kê sinh viên nếu có)
-      Map<String, dynamic> examData = {
-        'examId':
-            widget.examDoc?.id, // Ném ID sang bước sau để biết là Đang Sửa
-        'questions': widget.examDoc != null
-            ? (widget.examDoc!.data() as Map)['questions']
-            : null,
-        'luotLamBai': widget.examDoc != null
-            ? (widget.examDoc!.data() as Map)['luotLamBai']
-            : 0,
-        'dangLamBai': widget.examDoc != null
-            ? (widget.examDoc!.data() as Map)['dangLamBai']
-            : 0,
-        'tenDeThi': _nameCtrl.text.trim(),
-        'thoiGian': int.tryParse(_durationCtrl.text.trim()) ?? 150,
-        'maDe': _codeCtrl.text.trim(),
-        'moTa': _descCtrl.text.trim(),
-        'strategy': _strategy,
-        'shuffleQuestions': _shuffleQuestions,
-        'shuffleOptions': _shuffleOptions,
-        'isPublic': _isPublic,
-      };
+      try {
+        // --- LOGIC KIỂM TRA TRÙNG LẶP (KHÔNG PHÂN BIỆT HOA THƯỜNG) ---
+        String currentNameLower = _nameCtrl.text.trim().toLowerCase();
+        String currentCodeLower = _codeCtrl.text.trim().toLowerCase();
+        String currentDocId = widget.examDoc?.id ?? '';
 
-      Map<String, int> config = {
-        'Tiếng Việt': _tiengVietCount,
-        'Tiếng Anh': _tiengAnhCount,
-        'Toán học': _toanHocCount,
-        'Logic': _logicCount,
-        'Suy luận': _suyLuanCount,
-      };
+        QuerySnapshot snapshot = await FirebaseFirestore.instance
+            .collection('Exams')
+            .get();
+        bool isNameDuplicate = false;
+        bool isCodeDuplicate = false;
 
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) =>
-              ExamQuestionsScreen(examData: examData, config: config),
-        ),
-      );
+        for (var doc in snapshot.docs) {
+          if (doc.id == currentDocId)
+            continue; // Bỏ qua nếu là chính nó (trường hợp Đang Sửa)
+
+          Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+          String dbName = (data['tenDeThi'] ?? '').toString().toLowerCase();
+          String dbCode = (data['maDe'] ?? '').toString().toLowerCase();
+
+          if (dbName == currentNameLower) isNameDuplicate = true;
+          // Chỉ kiểm tra mã đề nếu mã đề không bị bỏ trống
+          if (currentCodeLower.isNotEmpty && dbCode == currentCodeLower)
+            isCodeDuplicate = true;
+
+          if (isNameDuplicate || isCodeDuplicate)
+            break; // Thoát vòng lặp sớm cho nhẹ máy
+        }
+
+        if (isNameDuplicate) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Tên đề thi đã tồn tại! Vui lòng chọn tên khác.'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          setState(() => _isChecking = false);
+          return;
+        }
+
+        if (isCodeDuplicate) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Mã đề thi đã tồn tại! Vui lòng chọn mã khác.'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          setState(() => _isChecking = false);
+          return;
+        }
+        // --- KẾT THÚC KIỂM TRA TRÙNG LẶP ---
+
+        // Nút Lưu Bản Nháp sẽ ép isPublic = false
+        if (saveAsDraft) _isPublic = false;
+
+        // Gom dữ liệu (Giữ lại số liệu thống kê sinh viên nếu có)
+        Map<String, dynamic> examData = {
+          'examId':
+              widget.examDoc?.id, // Ném ID sang bước sau để biết là Đang Sửa
+          'questions': widget.examDoc != null
+              ? (widget.examDoc!.data() as Map)['questions']
+              : null,
+          'luotLamBai': widget.examDoc != null
+              ? (widget.examDoc!.data() as Map)['luotLamBai']
+              : 0,
+          'dangLamBai': widget.examDoc != null
+              ? (widget.examDoc!.data() as Map)['dangLamBai']
+              : 0,
+          'tenDeThi': _nameCtrl.text.trim(),
+          'thoiGian': int.tryParse(_durationCtrl.text.trim()) ?? 150,
+          'maDe': _codeCtrl.text.trim(),
+          'moTa': _descCtrl.text.trim(),
+          'strategy': _strategy,
+          'shuffleQuestions': _shuffleQuestions,
+          'shuffleOptions': _shuffleOptions,
+          'isPublic': _isPublic,
+        };
+
+        Map<String, int> config = {
+          'Tiếng Việt': _tiengVietCount,
+          'Tiếng Anh': _tiengAnhCount,
+          'Toán học': _toanHocCount,
+          'Logic': _logicCount,
+          'Suy luận': _suyLuanCount,
+        };
+
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) =>
+                  ExamQuestionsScreen(examData: examData, config: config),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Lỗi kết nối máy chủ: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      } finally {
+        if (mounted)
+          setState(() => _isChecking = false); // Tắt hiệu ứng loading
+      }
     }
   }
 
@@ -903,7 +978,9 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
         children: [
           Expanded(
             child: OutlinedButton(
-              onPressed: () => _handleNextStep(saveAsDraft: true),
+              onPressed: _isChecking
+                  ? null
+                  : () => _handleNextStep(saveAsDraft: true),
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 side: BorderSide(color: _outline, width: 2),
@@ -926,7 +1003,9 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
           const SizedBox(width: 12),
           Expanded(
             child: ElevatedButton(
-              onPressed: () => _handleNextStep(saveAsDraft: false),
+              onPressed: _isChecking
+                  ? null
+                  : () => _handleNextStep(saveAsDraft: false),
               style: ElevatedButton.styleFrom(
                 backgroundColor: _primary,
                 foregroundColor: Colors.white,
@@ -937,24 +1016,33 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
                 elevation: 4,
                 shadowColor: _primary.withValues(alpha: 0.5),
               ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Flexible(
-                    child: Text(
-                      'Tiếp: Soạn câu hỏi',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
+              child: _isChecking
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
                       ),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
+                    )
+                  : const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            'Tiếp: Soạn câu hỏi',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+                        ),
+                        SizedBox(width: 4),
+                        Icon(Icons.arrow_forward, size: 18),
+                      ],
                     ),
-                  ),
-                  SizedBox(width: 4),
-                  Icon(Icons.arrow_forward, size: 18),
-                ],
-              ),
             ),
           ),
         ],

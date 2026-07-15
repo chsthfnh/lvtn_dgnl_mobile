@@ -28,16 +28,44 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   // --- HÀM: ĐĂNG KÝ BẰNG EMAIL & GỬI LINK XÁC THỰC ---
   Future<void> _signUpWithEmail() async {
-    if (_nameController.text.trim().isEmpty ||
-        _emailController.text.trim().isEmpty ||
-        _passwordController.text.trim().isEmpty) {
+    String name = _nameController.text.trim();
+    String email = _emailController.text.trim();
+    String pass = _passwordController.text.trim();
+    String confirmPass = _confirmPasswordController.text.trim();
+
+    // 1. Kiểm tra các ô bị bỏ trống
+    List<String> missingFields = [];
+    if (name.isEmpty) missingFields.add('Họ và tên');
+    if (email.isEmpty) missingFields.add('Email');
+    if (pass.isEmpty) missingFields.add('Mật khẩu');
+    if (confirmPass.isEmpty) missingFields.add('Xác nhận mật khẩu');
+
+    if (missingFields.isNotEmpty) {
+      // Nếu thiếu cả 4 ô thì báo "thiếu tất cả", ngược lại báo tên các ô bị thiếu
+      String errorMessage = missingFields.length == 4
+          ? 'Vui lòng điền đầy đủ tất cả thông tin!'
+          : 'Vui lòng nhập thiếu sót: ${missingFields.join(', ')}';
+
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Vui lòng điền đầy đủ thông tin!')),
+        SnackBar(content: Text(errorMessage), backgroundColor: Colors.red),
       );
       return;
     }
 
-    if (_passwordController.text != _confirmPasswordController.text) {
+    // 2. Kiểm tra định dạng Email hợp lệ
+    final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
+    if (!emailRegex.hasMatch(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Định dạng email không hợp lệ! (VD: name@email.com)'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // 3. Kiểm tra xác nhận mật khẩu
+    if (pass != confirmPass) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Mật khẩu xác nhận không khớp!'),
@@ -49,37 +77,33 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     setState(() => _isLoading = true);
     try {
-      // 1. Tạo tài khoản trên Firebase Auth
+      // 4. Tạo tài khoản trên Firebase Auth
       UserCredential userCredential = await _auth
-          .createUserWithEmailAndPassword(
-            email: _emailController.text.trim(),
-            password: _passwordController.text.trim(),
-          );
+          .createUserWithEmailAndPassword(email: email, password: pass);
 
       User? user = userCredential.user;
 
       if (user != null) {
-        // 2. Lưu hồ sơ lên Firestore (Thêm targetScore mặc định để không bị lỗi màn Thống kê)
+        // 5. Lưu hồ sơ lên Firestore
         await FirebaseFirestore.instance.collection('Users').doc(user.uid).set({
           'uid': user.uid,
           'email': user.email,
-          'fullName': _nameController.text.trim(),
+          'fullName': name,
           'role': 'student',
-          'targetScore': 900, // Đã bổ sung mục tiêu điểm mặc định
+          'targetScore': 900,
           'createdAt': FieldValue.serverTimestamp(),
         });
 
-        // 3. Gửi Link Xác Thực vào Email
+        // 6. Gửi Link Xác Thực vào Email
         await user.sendEmailVerification();
 
-        // 4. Đăng xuất ngay lập tức để ép xác thực
+        // 7. Đăng xuất ngay lập tức để ép xác thực
         await _auth.signOut();
 
         if (mounted) {
-          // HIỂN THỊ DIALOG BẮT BUỘC ĐỌC THAY VÌ SNACKBAR TỰ BIẾN MẤT
           showDialog(
             context: context,
-            barrierDismissible: false, // Bắt buộc người dùng phải bấm nút
+            barrierDismissible: false,
             builder: (ctx) => AlertDialog(
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
@@ -111,10 +135,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
               actions: [
                 TextButton(
                   onPressed: () {
-                    Navigator.pop(ctx); // Đóng Dialog
-                    Navigator.pop(
-                      context,
-                    ); // Lùi về đúng màn hình Đăng nhập (Clean Stack)
+                    Navigator.pop(ctx);
+                    Navigator.pop(context);
                   },
                   child: const Text(
                     'Đã hiểu và Đăng nhập',
@@ -128,13 +150,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
     } on FirebaseAuthException catch (e) {
       if (mounted) {
-        String message = 'Lỗi đăng ký';
+        String message = 'Lỗi đăng ký. Vui lòng thử lại sau.';
         if (e.code == 'weak-password') {
           message = 'Mật khẩu quá yếu (cần ít nhất 6 ký tự).';
         } else if (e.code == 'email-already-in-use') {
-          message = 'Email này đã được đăng ký!';
-        } else if (e.code == 'invalid-email') {
-          message = 'Định dạng email không hợp lệ!';
+          message = 'Email này đã được đăng ký cho một tài khoản khác!';
         }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message), backgroundColor: Colors.red),

@@ -26,18 +26,47 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // --- HÀM 1: ĐĂNG NHẬP BẰNG EMAIL & MẬT KHẨU ---
   Future<void> _loginWithEmail() async {
-    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
+    String email = _emailController.text.trim();
+    String password = _passwordController.text.trim();
+
+    // 1. Kiểm tra bỏ trống từng ô
+    if (email.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Vui lòng nhập đầy đủ Email và Mật khẩu')),
+        const SnackBar(
+          content: Text('Vui lòng nhập Email!'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    if (password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Vui lòng nhập Mật khẩu!'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // 2. Kiểm tra định dạng Email hợp lệ
+    final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
+    if (!emailRegex.hasMatch(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Định dạng email không hợp lệ! (VD: name@email.com)'),
+          backgroundColor: Colors.red,
+        ),
       );
       return;
     }
 
     setState(() => _isLoading = true);
     try {
+      // 3. Tiến hành gọi Firebase Auth để đăng nhập
       UserCredential userCredential = await _auth.signInWithEmailAndPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
+        email: email,
+        password: password,
       );
 
       User? user = userCredential.user;
@@ -63,12 +92,20 @@ class _LoginScreenState extends State<LoginScreen> {
       if (mounted) await _checkRoleAndNavigate();
     } on FirebaseAuthException catch (e) {
       if (mounted) {
-        String message = 'Lỗi đăng nhập';
-        if (e.code == 'user-not-found' || e.code == 'invalid-credential') {
-          message = 'Sai thông tin hoặc tài khoản chưa được đăng ký!';
+        String message = 'Lỗi đăng nhập. Vui lòng thử lại!';
+
+        // 4. Phân loại lỗi chính xác từ Firebase
+        if (e.code == 'user-not-found') {
+          message = 'Tài khoản không tồn tại hoặc chưa được đăng ký!';
         } else if (e.code == 'wrong-password') {
           message = 'Sai mật khẩu!';
+        } else if (e.code == 'invalid-credential') {
+          message = 'Sai tài khoản hoặc mật khẩu!';
+        } else if (e.code == 'too-many-requests') {
+          message =
+              'Đăng nhập sai quá nhiều lần. Tài khoản bị tạm khóa, vui lòng thử lại sau!';
         }
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message), backgroundColor: Colors.red[700]),
         );

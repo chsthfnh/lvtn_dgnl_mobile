@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
+import 'ai_practice_result_screen.dart';
 
 const _primaryColor = Color(0xFF1A237E); // Đổi tông màu một chút cho khác biệt
 const _onPrimaryColor = Colors.white;
@@ -126,105 +127,19 @@ class _AIPracticeScreenState extends State<AIPracticeScreen> {
       }
     }
 
-    // Hiện popup kết quả đơn giản
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        contentPadding: const EdgeInsets.all(24),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.emoji_events, color: Colors.amber, size: 80),
-            const SizedBox(height: 16),
-            const Text(
-              'HOÀN THÀNH!',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: _primaryColor,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Chủ đề: ${widget.topic}',
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.grey),
-            ),
-            const SizedBox(height: 24),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: _surfaceColor,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  Column(
-                    children: [
-                      const Text(
-                        'Số câu đúng',
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '$correctCount / ${widget.questions.length}',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: _activeColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Container(height: 40, width: 1, color: Colors.grey.shade300),
-                  Column(
-                    children: [
-                      const Text(
-                        'Thời gian',
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _formatTime((15 * 60) - _secondsRemaining),
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: _primaryColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _primaryColor,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                onPressed: () {
-                  Navigator.pop(context); // Đóng Dialog
-                  Navigator.pop(context); // Thoát khỏi màn hình luyện tập
-                },
-                child: const Text(
-                  'VỀ TRANG CHỦ',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-          ],
+    int timeSpentSeconds = (15 * 60) - _secondsRemaining;
+
+    // Tốc biến sang Màn hình Kết quả AI
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AIPracticeResultScreen(
+          questions: widget.questions,
+          userAnswers: _userAnswers,
+          correctAnswers: correctCount,
+          timeSpent: _formatTime(timeSpentSeconds),
+          subjectName: widget.subjectName,
+          topic: widget.topic,
         ),
       ),
     );
