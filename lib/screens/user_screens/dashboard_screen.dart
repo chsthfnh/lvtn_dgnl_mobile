@@ -12,6 +12,7 @@ import 'ai_screens/ai_daily_suggestion_widget.dart';
 import 'ai_screens/ai_flashcard_screen.dart';
 import 'ai_screens/ai_ocr_scanner_widget.dart';
 import 'mock_exam_screens/offline_exams_screen.dart';
+import 'package:dgnl_lachithanh_dh52201455/screens/user_screens/practice_screens/advanced_practice_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -107,7 +108,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                   return ListView.builder(
                     itemCount: snapshot.data!.docs.length,
-                    // BÊN TRONG ListView.builder CỦA HÀM _showNotificationPopup():
                     itemBuilder: (context, index) {
                       var doc = snapshot.data!.docs[index];
                       var data = doc.data() as Map<String, dynamic>;
@@ -228,7 +228,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // --- HÀM TẢI TÊN NGƯỜI DÙNG (Giữ nguyên) ---
+  // --- HÀM TẢI TÊN NGƯỜI DÙNG ---
   Future<void> _fetchUserData() async {
     User? user = FirebaseAuth.instance.currentUser;
     if (user != null) {
@@ -364,7 +364,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ],
               ),
-              // THAY THẾ ĐOẠN ĐẾM CHẤM ĐỎ CŨ BẰNG ĐOẠN NÀY:
               actions: [
                 StreamBuilder<QuerySnapshot>(
                   stream: FirebaseFirestore.instance
@@ -377,12 +376,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       String uid = FirebaseAuth.instance.currentUser!.uid;
                       for (var doc in snapshot.data!.docs) {
                         var data = doc.data() as Map<String, dynamic>;
-
-                        // Nếu user đã vuốt xóa thông báo này rồi -> Bỏ qua
                         List deletedBy = data['deletedBy'] ?? [];
                         if (deletedBy.contains(uid)) continue;
 
-                        // Nếu chưa xóa, check xem đã đọc chưa
                         List readBy = data['readBy'] ?? [];
                         if (!readBy.contains(uid)) {
                           hasUnread = true;
@@ -575,6 +571,88 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ],
           ),
           const SizedBox(height: 16),
+
+          // ==========================================
+          // ĐÃ THÊM: NÚT LUYỆN TẬP NÂNG CAO AI (NẰM NGANG)
+          // ==========================================
+          GestureDetector(
+            onTap: () {
+              currentScreenNotifier.value = 'Luyện tập AI';
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const AdvancedPracticeScreen(),
+                ),
+              ).then((_) {
+                currentScreenNotifier.value = 'Trang chủ';
+                updatePresence('idle');
+              });
+            },
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF1A237E), Color(0xFF3949AB)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.blue.withOpacity(0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.auto_awesome,
+                      color: Colors.amber,
+                      size: 28,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          'Luyện tập nâng cao (AI)',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          'Sinh đề tự động thông minh',
+                          style: TextStyle(color: Colors.white70, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.arrow_forward_ios,
+                    color: Colors.white70,
+                    size: 16,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // ==========================================
           Row(
             children: [
               Expanded(
