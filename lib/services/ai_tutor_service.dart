@@ -11,9 +11,7 @@ class AITutorService {
   late final ChatSession _chatSession;
 
   AITutorService() {
-    // gemini-1.5-flash đã bị Google khai tử (trả lỗi 404 v1beta not found).
-    // Dùng gemini-2.5-flash (ổn định, rẻ, nhanh) - hoặc gemini-flash-latest
-    // nếu muốn tự động trỏ tới bản Flash mới nhất mà không cần sửa code sau này.
+    // gemini-3.5-flash lite
     _model = GenerativeModel(
       model: 'gemini-3.1-flash-lite',
       apiKey: _apiKey,

@@ -3,11 +3,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'register_screen.dart';
 import 'forgot_password_screen.dart';
-import '../screens/user_screens/dashboard_screen.dart';
-import '../screens/admin_screens/admin_dashboard_screen.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'auth_wrapper.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -24,12 +25,44 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscurePassword = true;
   bool _isLoading = false;
 
-  // --- HÀM 1: ĐĂNG NHẬP BẰNG EMAIL & MẬT KHẨU ---
+  // --- HÀM 1: LƯU SESSION ID VÀ LỊCH SỬ THIẾT BỊ ---
+  Future<void> _saveSessionAndHistory(String uid) async {
+    try {
+      String deviceName = 'Thiết bị không xác định';
+      if (kIsWeb) {
+        deviceName = 'Trình duyệt Web';
+      } else {
+        deviceName = Platform.isAndroid
+            ? 'Điện thoại Android'
+            : (Platform.isIOS ? 'Điện thoại iOS' : 'Thiết bị khác');
+      }
+
+      String sessionId = DateTime.now().millisecondsSinceEpoch.toString();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('current_session_id', sessionId);
+
+      await FirebaseFirestore.instance.collection('Users').doc(uid).set({
+        'sessionId': sessionId,
+      }, SetOptions(merge: true));
+
+      await FirebaseFirestore.instance
+          .collection('Users')
+          .doc(uid)
+          .collection('LoginHistory')
+          .add({
+            'deviceInfo': deviceName,
+            'timestamp': FieldValue.serverTimestamp(),
+          });
+    } catch (e) {
+      debugPrint('Lỗi lưu thiết bị: $e');
+    }
+  }
+
+  // --- HÀM 2: ĐĂNG NHẬP BẰNG EMAIL & MẬT KHẨU ---
   Future<void> _loginWithEmail() async {
     String email = _emailController.text.trim();
     String password = _passwordController.text.trim();
 
-    // 1. Kiểm tra bỏ trống từng ô
     if (email.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -49,7 +82,6 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    // 2. Kiểm tra định dạng Email hợp lệ
     final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
     if (!emailRegex.hasMatch(email)) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -63,17 +95,18 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _isLoading = true);
     try {
-      // 3. Tiến hành gọi Firebase Auth để đăng nhập
+      // DỌN SẠCH SESSION CŨ TRƯỚC KHI ĐĂNG NHẬP ĐỂ KHÔNG BỊ ĐÁ VĂNG NHẦM
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('current_session_id');
+
       UserCredential userCredential = await _auth.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
-
       User? user = userCredential.user;
 
-      // CHẶN NGƯỜI DÙNG CHƯA NHẤN LINK XÁC THỰC EMAIL
       if (user != null && !user.emailVerified) {
-        await _auth.signOut(); // Ép buộc đăng xuất trên hệ thống ngay lập tức
+        await _auth.signOut();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -81,30 +114,42 @@ class _LoginScreenState extends State<LoginScreen> {
                 'Tài khoản chưa được kích hoạt! Vui lòng mở hộp thư email và nhấn vào liên kết xác thực.',
                 style: TextStyle(fontSize: 15),
               ),
-              backgroundColor: Colors.orange[800], // Màu cam cảnh báo
+              backgroundColor: Colors.orange[800],
               duration: const Duration(seconds: 5),
             ),
           );
         }
-        return; // Dừng hàm tại đây, không cho chạy xuống lệnh chuyển trang
+        return;
       }
 
-      if (mounted) await _checkRoleAndNavigate();
+      await _saveSessionAndHistory(user!.uid);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Đăng nhập thành công!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        // KẾT THÚC ĐĂNG NHẬP: Trở về AuthWrapper để nó tự điều hướng và lắng nghe thiết bị khác
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => const AuthWrapper()),
+          (route) => false,
+        );
+      }
     } on FirebaseAuthException catch (e) {
       if (mounted) {
         String message = 'Lỗi đăng nhập. Vui lòng thử lại!';
-
-        // 4. Phân loại lỗi chính xác từ Firebase
-        if (e.code == 'user-not-found') {
+        if (e.code == 'user-not-found')
           message = 'Tài khoản không tồn tại hoặc chưa được đăng ký!';
-        } else if (e.code == 'wrong-password') {
+        else if (e.code == 'wrong-password')
           message = 'Sai mật khẩu!';
-        } else if (e.code == 'invalid-credential') {
+        else if (e.code == 'invalid-credential')
           message = 'Sai tài khoản hoặc mật khẩu!';
-        } else if (e.code == 'too-many-requests') {
+        else if (e.code == 'too-many-requests')
           message =
               'Đăng nhập sai quá nhiều lần. Tài khoản bị tạm khóa, vui lòng thử lại sau!';
-        }
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message), backgroundColor: Colors.red[700]),
@@ -115,16 +160,16 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // --- HÀM 2: ĐĂNG NHẬP BẰNG GOOGLE (TÁCH LUỒNG WEB & MOBILE) ---
+  // --- HÀM 3: ĐĂNG NHẬP BẰNG GOOGLE ---
   Future<void> _signInWithGoogle() async {
     setState(() => _isLoading = true);
     try {
-      if (kIsWeb) {
-        // ==========================================
-        // 1. LUỒNG DÀNH CHO WEB (Không dùng thư viện ngoài)
-        // ==========================================
-        GoogleAuthProvider authProvider = GoogleAuthProvider();
+      // 1. DỌN SẠCH SESSION CŨ DƯỚI MÁY TRƯỚC KHI ĐĂNG NHẬP
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('current_session_id');
 
+      if (kIsWeb) {
+        GoogleAuthProvider authProvider = GoogleAuthProvider();
         UserCredential userCredential = await _auth.signInWithPopup(
           authProvider,
         );
@@ -135,7 +180,6 @@ class _LoginScreenState extends State<LoginScreen> {
           return;
         }
 
-        // Giữ nguyên logic bảo mật: Kiểm tra xem email đã được Admin duyệt/đăng ký chưa
         var userQuery = await FirebaseFirestore.instance
             .collection('Users')
             .where('email', isEqualTo: user.email)
@@ -143,29 +187,44 @@ class _LoginScreenState extends State<LoginScreen> {
             .get();
 
         if (userQuery.docs.isEmpty) {
-          // TÀI KHOẢN CHƯA ĐĂNG KÝ -> Xóa account nháp vừa tạo và văng ra ngoài
           await user.delete();
           await _auth.signOut();
           _showUnregisteredError();
           return;
         }
 
-        // Hợp lệ -> Chuyển trang
-        if (mounted) await _checkRoleAndNavigate();
+        // 2. TẠO SESSION ID MỚI & LƯU LỊCH SỬ THIẾT BỊ (QUAN TRỌNG ĐỂ ĐÁ MÁY KHÁC)
+        await _saveSessionAndHistory(user.uid);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Đăng nhập thành công!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+
+          // 3. ÉP TRỞ VỀ TRẠM GÁC AUTH WRAPPER (KHÔNG NHẢY THẲNG VÀO DASHBOARD)
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (context) => const AuthWrapper()),
+            (route) => false,
+          );
+        }
       } else {
-        // ==========================================
-        // 2. LUỒNG DÀNH CHO ĐIỆN THOẠI (Android/iOS)
-        // ==========================================
-        // google_sign_in >=7.0.0: GoogleSignIn là singleton, phải initialize()
-        // trước khi dùng, và signIn() đã đổi tên thành authenticate().
+        // DÀNH CHO NỀN TẢNG MOBILE (ANDROID/IOS) - google_sign_in v7.x API
+        // Từ v7, GoogleSignIn không còn constructor mặc định, phải dùng singleton
         final GoogleSignIn googleSignIn = GoogleSignIn.instance;
+
+        // Bắt buộc initialize() trước khi dùng (an toàn khi gọi lại nhiều lần)
         await googleSignIn.initialize();
 
-        final GoogleSignInAccount googleUser = await googleSignIn.authenticate(
-          scopeHint: ['email'],
-        );
+        // signIn() đã bị thay bằng authenticate(). Nếu người dùng huỷ,
+        // hàm này sẽ throw GoogleSignInException (được bắt ở catch bên ngoài,
+        // vốn đã lọc bỏ các lỗi chứa từ 'canceled').
+        final GoogleSignInAccount googleUser = await googleSignIn
+            .authenticate();
 
-        // Kiểm tra Database TRƯỚC KHI kết nối Firebase Auth
         var userQuery = await FirebaseFirestore.instance
             .collection('Users')
             .where('email', isEqualTo: googleUser.email)
@@ -178,12 +237,14 @@ class _LoginScreenState extends State<LoginScreen> {
           return;
         }
 
-        // HỢP LỆ -> Cấp phép Auth
-        // Từ v7, accessToken không còn nằm trong `authentication` nữa,
-        // phải xin quyền (authorize) riêng qua authorizationClient.
-        final GoogleSignInClientAuthorization authorization = await googleUser
-            .authorizationClient
-            .authorizeScopes(['email']);
+        // accessToken không còn nằm trong GoogleSignInAuthentication nữa.
+        // Phải xin quyền (authorization) riêng để lấy accessToken.
+        const List<String> scopes = <String>['email', 'profile'];
+        final authorization =
+            await googleUser.authorizationClient.authorizationForScopes(
+              scopes,
+            ) ??
+            await googleUser.authorizationClient.authorizeScopes(scopes);
 
         final AuthCredential credential = GoogleAuthProvider.credential(
           idToken: googleUser.authentication.idToken,
@@ -192,7 +253,24 @@ class _LoginScreenState extends State<LoginScreen> {
 
         await _auth.signInWithCredential(credential);
 
-        if (mounted) await _checkRoleAndNavigate();
+        // 2. TẠO SESSION ID MỚI & LƯU LỊCH SỬ THIẾT BỊ
+        await _saveSessionAndHistory(_auth.currentUser!.uid);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Đăng nhập thành công!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+
+          // 3. ÉP TRỞ VỀ TRẠM GÁC AUTH WRAPPER
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (context) => const AuthWrapper()),
+            (route) => false,
+          );
+        }
       }
     } catch (e) {
       if (mounted &&
@@ -207,7 +285,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // --- HÀM HỖ TRỢ: BÁO LỖI TÀI KHOẢN CHƯA ĐĂNG KÝ ---
   void _showUnregisteredError() {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -221,77 +298,13 @@ class _LoginScreenState extends State<LoginScreen> {
         action: SnackBarAction(
           label: 'ĐĂNG KÝ NGAY',
           textColor: Colors.yellowAccent,
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const RegisterScreen()),
-            );
-          },
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const RegisterScreen()),
+          ),
         ),
       ),
     );
-  }
-
-  // --- HÀM 3: KIỂM TRA QUYỀN VÀ CHUYỂN TRANG ---
-  Future<void> _checkRoleAndNavigate() async {
-    if (!mounted) return;
-
-    // --- BẮT ĐẦU ĐOẠN LƯU LỊCH SỬ THIẾT BỊ ---
-    try {
-      String deviceName = 'Thiết bị không xác định';
-
-      // Kiểm tra xem có đang chạy trên Web không trước khi gọi Platform (Fix lỗi crash Web)
-      if (kIsWeb) {
-        deviceName = 'Trình duyệt Web';
-      } else {
-        deviceName = Platform.isAndroid
-            ? 'Điện thoại Android'
-            : (Platform.isIOS ? 'Điện thoại iOS' : 'Thiết bị khác');
-      }
-
-      await FirebaseFirestore.instance
-          .collection('Users')
-          .doc(_auth.currentUser!.uid)
-          .collection('LoginHistory')
-          .add({
-            'deviceInfo': deviceName,
-            'timestamp': FieldValue.serverTimestamp(),
-          });
-    } catch (e) {
-      debugPrint('Lỗi lưu thiết bị: $e');
-    }
-    // --- KẾT THÚC ĐOẠN LƯU LỊCH SỬ THIẾT BỊ ---
-
-    DocumentSnapshot userDoc = await FirebaseFirestore.instance
-        .collection('Users')
-        .doc(_auth.currentUser!.uid)
-        .get();
-
-    String role = 'student';
-    if (userDoc.exists && userDoc.data() != null) {
-      final data = userDoc.data() as Map<String, dynamic>;
-      role = data['role'] ?? 'student';
-    }
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Đăng nhập thành công!'),
-        backgroundColor: Colors.green,
-      ),
-    );
-
-    if (role == 'admin') {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
-      );
-    } else {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const DashboardScreen()),
-      );
-    }
   }
 
   @override
@@ -311,7 +324,6 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Logo
               Center(
                 child: Container(
                   padding: const EdgeInsets.all(16),
@@ -327,8 +339,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 24),
-
-              // Tiêu đề
               const Text(
                 'EduTest ĐGNL',
                 style: TextStyle(
@@ -345,7 +355,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 40),
 
-              // Email Field
               const Text(
                 'Email',
                 style: TextStyle(fontWeight: FontWeight.bold),
@@ -366,7 +375,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Password Field
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -375,14 +383,12 @@ class _LoginScreenState extends State<LoginScreen> {
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   TextButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const ForgotPasswordScreen(),
-                        ),
-                      );
-                    },
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ForgotPasswordScreen(),
+                      ),
+                    ),
                     child: const Text(
                       'Quên mật khẩu?',
                       style: TextStyle(color: Color(0xFF1976D2)),
@@ -414,7 +420,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 32),
 
-              // Nút Đăng nhập
               _isLoading
                   ? const Center(child: CircularProgressIndicator())
                   : ElevatedButton(
@@ -423,7 +428,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        backgroundColor: const Color(0xFF1A237E), // Xanh đậm
+                        backgroundColor: const Color(0xFF1A237E),
                         foregroundColor: Colors.white,
                       ),
                       onPressed: _loginWithEmail,
@@ -437,7 +442,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
 
               const SizedBox(height: 24),
-              // Dòng chữ "HOẶC"
               const Row(
                 children: [
                   Expanded(child: Divider()),
@@ -450,7 +454,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 24),
 
-              // Nút Google
               _isLoading
                   ? const SizedBox.shrink()
                   : OutlinedButton.icon(
@@ -470,20 +473,17 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
               const SizedBox(height: 32),
 
-              // Liên kết Đăng ký
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const Text('Chưa có tài khoản?'),
                   TextButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const RegisterScreen(),
-                        ),
-                      );
-                    },
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const RegisterScreen(),
+                      ),
+                    ),
                     child: const Text(
                       'Đăng ký tài khoản',
                       style: TextStyle(

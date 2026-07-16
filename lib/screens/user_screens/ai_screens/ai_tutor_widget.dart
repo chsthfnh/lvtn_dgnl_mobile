@@ -278,7 +278,7 @@ class _ChatInterfaceState extends State<_ChatInterface> {
       widget.messages.add({
         'isUser': false,
         'text':
-            'Chào bạn! Mình là AI Tutor. Mình thấy bạn đang ở màn hình **${widget.currentScreen}**. Mình có thể giúp gì cho bạn hôm nay?',
+            'Chào bạn! Mình là AI Tutor. Mình có thể giúp gì cho bạn hôm nay?',
       });
     }
   }
