@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class AdminAITemplateScreen extends StatefulWidget {
   const AdminAITemplateScreen({super.key});
@@ -370,13 +371,26 @@ class _TemplateFormSheetState extends State<_TemplateFormSheet> {
       }
 
       // 3. Quyết định Thêm mới hay Cập nhật
+      final currentUser = FirebaseAuth.instance.currentUser;
+
+      if (currentUser == null) {
+        throw Exception('Không xác định được tài khoản Admin');
+      }
+
       if (widget.doc == null) {
+        // Thêm template mới
         dataToSave['status'] = 'Active';
         dataToSave['createdAt'] = FieldValue.serverTimestamp();
+        dataToSave['createdBy'] = currentUser.uid;
+
         await FirebaseFirestore.instance
             .collection(widget.collectionName)
             .add(dataToSave);
       } else {
+        // Cập nhật template
+        dataToSave['updatedAt'] = FieldValue.serverTimestamp();
+        dataToSave['updatedBy'] = currentUser.uid;
+
         await widget.doc!.reference.update(dataToSave);
       }
 
