@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import '../practice_screens/practice_result_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 class RealExamScreen extends StatefulWidget {
   final DocumentSnapshot examDoc;
@@ -25,6 +26,7 @@ class _RealExamScreenState extends State<RealExamScreen> {
 
   List<DocumentSnapshot> _questions = [];
   bool _isLoading = true;
+  final Map<String, Future<String>> _imageFutures = {};
 
   int _currentIndex = 0;
   final Map<int, int> _userAnswers = {};
@@ -206,23 +208,32 @@ class _RealExamScreenState extends State<RealExamScreen> {
         role = (userDoc.data() as Map<String, dynamic>)['role'] ?? 'student';
       }
 
-      // 2. NẾU LÀ HỌC VIÊN THÌ MỚI LƯU VÀO DATABASE
-      if (role != 'admin') {
+      // Luôn lưu lịch sử cho tài khoản đang làm bài.
+      // Với Admin, đánh dấu đây là dữ liệu kiểm thử để có thể nhận biết/lọc sau này.
+      try {
         await FirebaseFirestore.instance.collection('ExamHistory').add({
           'userId': currentUserId,
-          'examId': widget.examDoc.id, // Hoặc 'practice_mode'
+          'examId': widget.examDoc.id,
           'examName': examName,
+          'activityType': 'exam',
+          'isAdminTest': role == 'admin',
           'timeSpentSeconds': timeSpentSeconds,
           'correctAnswers': correctCount,
           'answeredCount': answeredCount,
           'totalQuestions': _questions.length,
           'submittedAt': FieldValue.serverTimestamp(),
         });
-      } else {
-        // 3. NẾU LÀ ADMIN TEST: Bỏ qua lệnh lưu database, chỉ in ra console
-        debugPrint(
-          '--- CHẾ ĐỘ ADMIN TEST: Đã chặn lưu lịch sử làm bài vào Database ---',
-        );
+      } catch (e) {
+        debugPrint('Lỗi lưu lịch sử thi: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Không thể lưu lịch sử bài thi: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
       }
     }
 
@@ -406,6 +417,8 @@ class _RealExamScreenState extends State<RealExamScreen> {
     String qText = currentData['noiDungCauHoi'] ?? '';
     List<dynamic> options = currentData['options'] ?? [];
     String noiDungChung = currentData['noiDungChung'] ?? '';
+    String anhChung = currentData['anhChung']?.toString().trim() ?? '';
+    String anhCauHoi = currentData['anhCauHoi']?.toString().trim() ?? '';
 
     return Scaffold(
       backgroundColor: _bgLight,
@@ -487,7 +500,7 @@ class _RealExamScreenState extends State<RealExamScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // --- BOX DỮ KIỆN CHUNG ---
-                  if (noiDungChung.isNotEmpty) ...[
+                  if (noiDungChung.isNotEmpty || anhChung.isNotEmpty) ...[
                     Container(
                       padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
@@ -517,14 +530,18 @@ class _RealExamScreenState extends State<RealExamScreen> {
                             ],
                           ),
                           const SizedBox(height: 16),
-                          _buildMathText(
-                            noiDungChung,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              color: Colors.black87,
-                              height: 1.5,
+                          if (noiDungChung.isNotEmpty)
+                            _buildMathText(
+                              noiDungChung,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                color: Colors.black87,
+                                height: 1.5,
+                              ),
                             ),
-                          ),
+                          if (noiDungChung.isNotEmpty && anhChung.isNotEmpty)
+                            const SizedBox(height: 16),
+                          if (anhChung.isNotEmpty) _buildImage(anhChung),
                         ],
                       ),
                     ),
@@ -608,6 +625,10 @@ class _RealExamScreenState extends State<RealExamScreen> {
                             height: 1.5,
                           ),
                         ),
+                        if (anhCauHoi.isNotEmpty) ...[
+                          const SizedBox(height: 16),
+                          _buildImage(anhCauHoi),
+                        ],
                         const SizedBox(height: 24),
 
                         // Các phương án trắc nghiệm
@@ -747,6 +768,76 @@ class _RealExamScreenState extends State<RealExamScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Future<String> _resolveImageUrl(String imageValue) {
+    final String value = imageValue.trim();
+
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return Future.value(value);
+    }
+
+    if (value.startsWith('gs://')) {
+      return FirebaseStorage.instance.refFromURL(value).getDownloadURL();
+    }
+
+    final String storagePath = value.startsWith('QuestionImages/')
+        ? value
+        : 'QuestionImages/$value';
+    return FirebaseStorage.instance.ref(storagePath).getDownloadURL();
+  }
+
+  Widget _buildImage(String imageValue) {
+    _imageFutures.putIfAbsent(imageValue, () => _resolveImageUrl(imageValue));
+
+    return FutureBuilder<String>(
+      future: _imageFutures[imageValue],
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        if (snapshot.hasError || !snapshot.hasData) {
+          return Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _errorContainer,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              'Không tải được ảnh: $imageValue\n${snapshot.error ?? ''}',
+              style: TextStyle(color: _error, fontSize: 13),
+            ),
+          );
+        }
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.network(
+              snapshot.data!,
+              width: double.infinity,
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) => Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                color: _errorContainer,
+                child: Text(
+                  'URL ảnh không hợp lệ: $imageValue',
+                  style: TextStyle(color: _error),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
