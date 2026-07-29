@@ -24,9 +24,16 @@ class _LoginScreenState extends State<LoginScreen> {
 
   bool _obscurePassword = true;
   bool _isLoading = false;
+  bool _isGooglePopupOpen = false;
+  int _googleSignInAttempt = 0;
+  Future<void>? _googleSignInInitialization;
 
   // --- HÀM 1: LƯU SESSION ID VÀ LỊCH SỬ THIẾT BỊ ---
   Future<void> _saveSessionAndHistory(String uid) async {
+    final prefs = await SharedPreferences.getInstance();
+    final userRef = FirebaseFirestore.instance.collection('Users').doc(uid);
+    final sessionId = DateTime.now().microsecondsSinceEpoch.toString();
+
     try {
       String deviceName = 'Thiết bị không xác định';
       if (kIsWeb) {
@@ -37,24 +44,39 @@ class _LoginScreenState extends State<LoginScreen> {
             : (Platform.isIOS ? 'Điện thoại iOS' : 'Thiết bị khác');
       }
 
-      String sessionId = DateTime.now().millisecondsSinceEpoch.toString();
-      final prefs = await SharedPreferences.getInstance();
+      final userDoc = await userRef.get();
+      if (!userDoc.exists) {
+        throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'user-profile-not-found',
+          message: 'Tài khoản đã bị xóa khỏi hệ thống.',
+        );
+      }
+
+      // Lưu mã phiên mới trên thiết bị hiện tại trước.
       await prefs.setString('current_session_id', sessionId);
 
-      await FirebaseFirestore.instance.collection('Users').doc(uid).set({
-        'sessionId': sessionId,
-      }, SetOptions(merge: true));
+      // Cập nhật sessionId và lịch sử trong cùng một batch. Khi sessionId
+      // thay đổi, thiết bị cũ đang lắng nghe Users/{uid} sẽ tự đăng xuất.
+      final historyRef = userRef.collection('LoginHistory').doc();
+      final batch = FirebaseFirestore.instance.batch();
 
-      await FirebaseFirestore.instance
-          .collection('Users')
-          .doc(uid)
-          .collection('LoginHistory')
-          .add({
-            'deviceInfo': deviceName,
-            'timestamp': FieldValue.serverTimestamp(),
-          });
+      batch.update(userRef, {
+        'sessionId': sessionId,
+        'lastActive': FieldValue.serverTimestamp(),
+      });
+      batch.set(historyRef, {
+        'deviceInfo': deviceName,
+        'sessionId': sessionId,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+
+      await batch.commit();
     } catch (e) {
-      debugPrint('Lỗi lưu thiết bị: $e');
+      // Không giữ session cục bộ nếu cập nhật Firestore thất bại.
+      await prefs.remove('current_session_id');
+      debugPrint('Lỗi lưu phiên đăng nhập: $e');
+      rethrow;
     }
   }
 
@@ -96,15 +118,41 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
     try {
       // DỌN SẠCH SESSION CŨ TRƯỚC KHI ĐĂNG NHẬP ĐỂ KHÔNG BỊ ĐÁ VĂNG NHẦM
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('current_session_id');
 
       UserCredential userCredential = await _auth.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
       User? user = userCredential.user;
+      if (user == null) {
+        throw FirebaseAuthException(
+          code: 'user-not-found',
+          message: 'Không tìm thấy tài khoản.',
+        );
+      }
 
+      // Kiểm tra hồ sơ ứng dụng còn tồn tại hay không
+      final userDoc = await FirebaseFirestore.instance
+          .collection('Users')
+          .doc(user.uid)
+          .get();
+
+      if (!userDoc.exists) {
+        await _auth.signOut();
+
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Tài khoản đã bị xóa hoặc không còn được phép truy cập!',
+            ),
+            backgroundColor: Colors.red.shade800,
+          ),
+        );
+
+        return;
+      }
       if (user != null && !user.emailVerified) {
         await _auth.signOut();
         if (mounted) {
@@ -162,149 +210,218 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // --- HÀM 3: ĐĂNG NHẬP BẰNG GOOGLE ---
   Future<void> _signInWithGoogle() async {
-    setState(() => _isLoading = true);
-    try {
-      // 1. DỌN SẠCH SESSION CŨ DƯỚI MÁY TRƯỚC KHI ĐĂNG NHẬP
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('current_session_id');
+    if (_isLoading) return;
 
+    // Mỗi lần bấm là một yêu cầu mới. Nếu popup cũ phản hồi trễ,
+    // nó không được phép thay đổi trạng thái của yêu cầu hiện tại.
+    final int attemptId = ++_googleSignInAttempt;
+
+    try {
       if (kIsWeb) {
-        GoogleAuthProvider authProvider = GoogleAuthProvider();
-        UserCredential userCredential = await _auth.signInWithPopup(
-          authProvider,
+        // Khóa ngay để tránh nhấn liên tục
+        if (mounted) {
+          setState(() => _isGooglePopupOpen = true);
+        }
+
+        final GoogleAuthProvider provider = GoogleAuthProvider();
+
+        // Luôn hiện màn hình chọn tài khoản
+        provider.setCustomParameters({'prompt': 'select_account'});
+
+        // Quan trọng: gọi popup ngay, không await thao tác khác trước nó
+        final UserCredential userCredential = await _auth.signInWithPopup(
+          provider,
         );
-        User? user = userCredential.user;
+
+        if (!mounted) return;
+
+        setState(() {
+          _isGooglePopupOpen = false;
+          _isLoading = true;
+        });
+
+        final User? user = userCredential.user;
 
         if (user == null) {
-          setState(() => _isLoading = false);
           return;
         }
 
-        var userQuery = await FirebaseFirestore.instance
+        // Chỉ xóa session cũ sau khi popup đăng nhập thành công
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('current_session_id');
+
+        // Kiểm tra tài khoản theo UID
+        final userDoc = await FirebaseFirestore.instance
             .collection('Users')
-            .where('email', isEqualTo: user.email)
-            .limit(1)
+            .doc(user.uid)
             .get();
 
-        if (userQuery.docs.isEmpty) {
-          await user.delete();
+        if (!userDoc.exists) {
+          try {
+            await user.delete();
+          } catch (_) {
+            // Nếu không xóa được Auth thì vẫn phải đăng xuất
+          }
+
           await _auth.signOut();
           _showUnregisteredError();
           return;
         }
 
-        // 2. TẠO SESSION ID MỚI & LƯU LỊCH SỬ THIẾT BỊ (QUAN TRỌNG ĐỂ ĐÁ MÁY KHÁC)
         await _saveSessionAndHistory(user.uid);
 
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Đăng nhập thành công!'),
-              backgroundColor: Colors.green,
-            ),
-          );
+        if (!mounted) return;
 
-          // 3. ÉP TRỞ VỀ TRẠM GÁC AUTH WRAPPER (KHÔNG NHẢY THẲNG VÀO DASHBOARD)
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(builder: (context) => const AuthWrapper()),
-            (route) => false,
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Đăng nhập thành công!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const AuthWrapper()),
+          (route) => false,
+        );
       } else {
-        // DÀNH CHO NỀN TẢNG MOBILE (ANDROID/IOS) - google_sign_in v7.x API
-        // Từ v7, GoogleSignIn không còn constructor mặc định, phải dùng singleton
+        // --- MOBILE (ANDROID/IOS) - google_sign_in v7.x ---
+        if (mounted) {
+          setState(() => _isLoading = true);
+        }
+
         final GoogleSignIn googleSignIn = GoogleSignIn.instance;
 
-        // Bắt buộc initialize() trước khi dùng (an toàn khi gọi lại nhiều lần)
-        await googleSignIn.initialize();
+        // google_sign_in v7 yêu cầu initialize() đúng một lần.
+        await (_googleSignInInitialization ??= googleSignIn.initialize());
 
-        // signIn() đã bị thay bằng authenticate(). Nếu người dùng huỷ,
-        // hàm này sẽ throw GoogleSignInException (được bắt ở catch bên ngoài,
-        // vốn đã lọc bỏ các lỗi chứa từ 'canceled').
+        // Hiện giao diện chọn tài khoản Google trên thiết bị.
         final GoogleSignInAccount googleUser = await googleSignIn
             .authenticate();
 
-        var userQuery = await FirebaseFirestore.instance
+        final GoogleSignInAuthentication googleAuth = googleUser.authentication;
+
+        // Firebase chỉ cần ID token để xác thực Google trên mobile.
+        final AuthCredential credential = GoogleAuthProvider.credential(
+          idToken: googleAuth.idToken,
+        );
+
+        final UserCredential userCredential = await _auth.signInWithCredential(
+          credential,
+        );
+        final User? user = userCredential.user;
+
+        if (user == null) {
+          await googleSignIn.signOut();
+          await _auth.signOut();
+          return;
+        }
+
+        // Kiểm tra hồ sơ sau khi Firebase đã xác thực, sử dụng đúng UID.
+        final userDoc = await FirebaseFirestore.instance
             .collection('Users')
-            .where('email', isEqualTo: googleUser.email)
-            .limit(1)
+            .doc(user.uid)
             .get();
 
-        if (userQuery.docs.isEmpty) {
+        if (!userDoc.exists) {
+          try {
+            await user.delete();
+          } catch (_) {
+            // Nếu không xóa được Auth thì vẫn phải đăng xuất.
+          }
+
           await googleSignIn.signOut();
+          await _auth.signOut();
           _showUnregisteredError();
           return;
         }
 
-        // accessToken không còn nằm trong GoogleSignInAuthentication nữa.
-        // Phải xin quyền (authorization) riêng để lấy accessToken.
-        const List<String> scopes = <String>['email', 'profile'];
-        final authorization =
-            await googleUser.authorizationClient.authorizationForScopes(
-              scopes,
-            ) ??
-            await googleUser.authorizationClient.authorizeScopes(scopes);
+        // Ghi sessionId mới lên Firestore để đá phiên đang mở ở thiết bị khác.
+        await _saveSessionAndHistory(user.uid);
 
-        final AuthCredential credential = GoogleAuthProvider.credential(
-          idToken: googleUser.authentication.idToken,
-          accessToken: authorization.accessToken,
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Đăng nhập thành công!'),
+            backgroundColor: Colors.green,
+          ),
         );
 
-        await _auth.signInWithCredential(credential);
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const AuthWrapper()),
+          (route) => false,
+        );
+      }
+    } on FirebaseAuthException catch (e) {
+      // Đóng popup là thao tác hủy bình thường, không hiển thị lỗi.
+      const cancelledCodes = {
+        'popup-closed-by-user',
+        'cancelled-popup-request',
+        'popup-request-cancelled',
+        'web-context-cancelled',
+        'web-context-canceled',
+      };
 
-        // 2. TẠO SESSION ID MỚI & LƯU LỊCH SỬ THIẾT BỊ
-        await _saveSessionAndHistory(_auth.currentUser!.uid);
+      if (cancelledCodes.contains(e.code)) return;
 
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Đăng nhập thành công!'),
-              backgroundColor: Colors.green,
-            ),
-          );
-
-          // 3. ÉP TRỞ VỀ TRẠM GÁC AUTH WRAPPER
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(builder: (context) => const AuthWrapper()),
-            (route) => false,
-          );
-        }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Lỗi đăng nhập: ${e.message ?? e.code}'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } catch (e) {
-      if (mounted &&
-          !e.toString().contains('canceled') &&
-          !e.toString().contains('popup-closed-by-user')) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Lỗi đăng nhập: $e')));
+      final error = e.toString().toLowerCase();
+
+      if (!error.contains('canceled') &&
+          !error.contains('cancelled') &&
+          !error.contains('cancel') &&
+          !error.contains('popup-closed-by-user')) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Lỗi đăng nhập: $e')));
+        }
       }
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted && attemptId == _googleSignInAttempt) {
+        setState(() {
+          _isLoading = false;
+          _isGooglePopupOpen = false;
+        });
+      }
     }
   }
 
   void _showUnregisteredError() {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text(
-          'Tài khoản này chưa đăng ký. Vui lòng tạo tài khoản!',
-          style: TextStyle(fontSize: 15),
-        ),
-        backgroundColor: Colors.red[800],
-        duration: const Duration(seconds: 5),
-        action: SnackBarAction(
-          label: 'ĐĂNG KÝ NGAY',
-          textColor: Colors.yellowAccent,
-          onPressed: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const RegisterScreen()),
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: const Text(
+            'Tài khoản chưa đăng ký, vui lòng tạo tài khoản!',
+            style: TextStyle(fontSize: 15),
+          ),
+          backgroundColor: Colors.red[800],
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'ĐĂNG KÝ NGAY',
+            textColor: Colors.yellowAccent,
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const RegisterScreen()),
+              );
+            },
           ),
         ),
-      ),
-    );
+      );
   }
 
   @override
@@ -464,6 +581,9 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         side: BorderSide(color: Colors.grey[300]!),
                       ),
+                      // Không khóa bằng _isGooglePopupOpen. Nếu popup cũ bị
+                      // trình duyệt giữ trạng thái, lần bấm mới sẽ tự hủy yêu
+                      // cầu cũ và mở lại cửa sổ chọn tài khoản.
                       onPressed: _signInWithGoogle,
                       icon: Image.asset('assets/gg.png', height: 24),
                       label: const Text(

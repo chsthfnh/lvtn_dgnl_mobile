@@ -10,34 +10,66 @@ import '../screens/admin_screens/admin_dashboard_screen.dart';
 class AuthWrapper extends StatelessWidget {
   const AuthWrapper({super.key});
 
+  static final Set<String> _sessionChecksInProgress = <String>{};
+
   // --- HÀM KIỂM TRA VÀ ĐÁ VĂNG THIẾT BỊ KHÁC ---
-  void _checkAndKick(BuildContext context, String remoteSessionId) async {
-    final prefs = await SharedPreferences.getInstance();
-    String? localSessionId = prefs.getString('current_session_id');
+  Future<void> _checkAndKick(BuildContext context, String userId) async {
+    // Tránh một snapshot tạo ra nhiều tiến trình kiểm tra giống nhau.
+    if (!_sessionChecksInProgress.add(userId)) return;
 
-    // Chỉ đá văng nếu máy này đã có Session (đăng nhập xong) và mã Session không khớp với Server
-    if (localSessionId != null && localSessionId != remoteSessionId) {
-      await FirebaseAuth.instance.signOut();
-      await prefs.remove('current_session_id');
+    try {
+      // Chờ thao tác đăng nhập hoàn tất việc lưu session local và Firestore.
+      // Khoảng chờ này ngăn thiết bị mới tự đá chính nó do độ trễ đồng bộ.
+      await Future<void>.delayed(const Duration(milliseconds: 800));
 
-      if (context.mounted) {
-        // Đẩy thẳng về màn hình đăng nhập, xóa sạch lịch sử trang
+      final prefs = await SharedPreferences.getInstance();
+      final String? localSessionId = prefs.getString('current_session_id');
+
+      // Chưa lưu xong phiên đăng nhập thì chưa được kết luận là trùng phiên.
+      if (localSessionId == null || localSessionId.isEmpty) return;
+
+      // Đọc lại dữ liệu mới nhất, không sử dụng sessionId từ snapshot cũ.
+      final latestUserDoc = await FirebaseFirestore.instance
+          .collection('Users')
+          .doc(userId)
+          .get();
+
+      if (!latestUserDoc.exists) return;
+
+      final data = latestUserDoc.data();
+      final String? remoteSessionId = data?['sessionId']?.toString();
+
+      if (remoteSessionId == null || remoteSessionId.isEmpty) return;
+
+      if (localSessionId != remoteSessionId) {
+        await prefs.remove('current_session_id');
+        await FirebaseAuth.instance.signOut();
+
+        if (!context.mounted) return;
+
         Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(builder: (context) => const LoginScreen()),
           (route) => false,
         );
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Tài khoản của bạn vừa được đăng nhập ở thiết bị khác!',
-              style: TextStyle(fontWeight: FontWeight.bold),
+
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Tài khoản của bạn vừa được đăng nhập ở thiết bị khác!',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 5),
             ),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 5),
-          ),
-        );
+          );
       }
+    } catch (e) {
+      debugPrint('Lỗi kiểm tra phiên đăng nhập: $e');
+    } finally {
+      _sessionChecksInProgress.remove(userId);
     }
   }
 
@@ -77,25 +109,54 @@ class AuthWrapper extends StatelessWidget {
               );
             }
 
-            // Nếu tài khoản bị xóa trên Firebase
-            if (roleSnapshot.hasError ||
-                !roleSnapshot.hasData ||
-                !roleSnapshot.data!.exists) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                FirebaseAuth.instance.signOut();
-              });
-              return const Scaffold(
-                body: Center(child: CircularProgressIndicator()),
+            // Lỗi đọc Firestore: không nên coi là tài khoản chưa đăng ký
+            if (roleSnapshot.hasError) {
+              return Scaffold(
+                body: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      'Không thể kiểm tra thông tin tài khoản.\n'
+                      'Vui lòng kiểm tra kết nối mạng và thử lại.',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                  ),
+                ),
               );
+            }
+
+            // Có tài khoản Firebase Auth nhưng chưa có hồ sơ trong Users
+            if (!roleSnapshot.hasData || !roleSnapshot.data!.exists) {
+              WidgetsBinding.instance.addPostFrameCallback((_) async {
+                await FirebaseAuth.instance.signOut();
+
+                if (!context.mounted) return;
+
+                ScaffoldMessenger.of(context)
+                  ..hideCurrentSnackBar()
+                  ..showSnackBar(
+                    SnackBar(
+                      content: const Text(
+                        'Tài khoản Google này chưa được đăng ký. '
+                        'Vui lòng tạo tài khoản trước!',
+                      ),
+                      backgroundColor: Colors.red[800],
+                      duration: const Duration(seconds: 6),
+                    ),
+                  );
+              });
+
+              return const LoginScreen();
             }
 
             final data = roleSnapshot.data!.data() as Map<String, dynamic>?;
 
             // --- BẮT ĐẦU LOGIC ĐÁ VĂNG KHI TRÙNG TÀI KHOẢN ---
             if (data != null && data.containsKey('sessionId')) {
-              String remoteSessionId = data['sessionId'];
-              // Gọi hàm kiểm tra ngầm, không block giao diện
-              _checkAndKick(context, remoteSessionId);
+              // Hàm sẽ đợi ngắn rồi đọc lại sessionId mới nhất để tránh
+              // thiết bị vừa đăng nhập tự đá chính nó.
+              _checkAndKick(context, user.uid);
             }
             // --- KẾT THÚC LOGIC ---
 

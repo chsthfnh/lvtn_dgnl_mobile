@@ -573,22 +573,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           Timestamp? lastActiveTs = data['lastActive'];
           String action = data['currentAction'] ?? 'offline';
 
-          // THÊM ĐIỀU KIỆN NÀY:
-          // Chỉ đưa vào danh sách giám sát nếu học viên ĐÃ TỪNG HOẠT ĐỘNG
-          // (Tức là đã xác thực email và đăng nhập thành công ít nhất 1 lần)
-          if (lastActiveTs != null) {
-            bool isOffline = true;
-            if (now.difference(lastActiveTs.toDate()).inMinutes < 5) {
-              isOffline = false;
-            }
-
-            allUsers.add({
-              'name': data['fullName'] ?? 'Học viên ẩn danh',
-              'email': data['email'] ?? '',
-              'lastActive': lastActiveTs.toDate(),
-              'status': isOffline ? 'offline' : action,
-            });
+          // Hiển thị mọi học viên, kể cả tài khoản chưa từng hoạt động.
+          bool isOffline = true;
+          if (lastActiveTs != null &&
+              now.difference(lastActiveTs.toDate()).inMinutes < 5) {
+            isOffline = false;
           }
+
+          allUsers.add({
+            'id': doc.id,
+            'name': data['fullName'] ?? 'Học viên ẩn danh',
+            'email': data['email'] ?? '',
+            'lastActive': lastActiveTs?.toDate(),
+            'status': isOffline ? 'offline' : action,
+          });
         }
 
         // Sắp xếp: Ai vừa hoạt động gần nhất đưa lên đầu
@@ -703,6 +701,40 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         children: [
+          PopupMenuButton<String>(
+            tooltip: 'Tùy chọn tài khoản',
+            icon: const Icon(Icons.more_vert, color: Colors.grey),
+            onSelected: (value) {
+              if (value == 'view') {
+                _showUserInfoDialog(user['id'] as String);
+              } else if (value == 'delete') {
+                _confirmDeleteUser(user);
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem<String>(
+                value: 'view',
+                child: Row(
+                  children: [
+                    Icon(Icons.person_outline, color: Color(0xFF28355A)),
+                    SizedBox(width: 10),
+                    Text('Xem thông tin'),
+                  ],
+                ),
+              ),
+              PopupMenuItem<String>(
+                value: 'delete',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete_outline, color: Colors.red),
+                    SizedBox(width: 10),
+                    Text('Xóa tài khoản', style: TextStyle(color: Colors.red)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 4),
           Stack(
             children: [
               CircleAvatar(
@@ -798,22 +830,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               Timestamp? lastActiveTs = data['lastActive'];
               String action = data['currentAction'] ?? 'offline';
 
-              // THÊM ĐIỀU KIỆN NÀY:
-              // Chỉ đưa vào danh sách giám sát nếu học viên ĐÃ TỪNG HOẠT ĐỘNG
-              // (Tức là đã xác thực email và đăng nhập thành công ít nhất 1 lần)
-              if (lastActiveTs != null) {
-                bool isOffline = true;
-                if (now.difference(lastActiveTs.toDate()).inMinutes < 5) {
-                  isOffline = false;
-                }
-
-                allUsers.add({
-                  'name': data['fullName'] ?? 'Học viên ẩn danh',
-                  'email': data['email'] ?? '',
-                  'lastActive': lastActiveTs.toDate(),
-                  'status': isOffline ? 'offline' : action,
-                });
+              // Hiển thị mọi học viên, kể cả tài khoản chưa từng hoạt động.
+              bool isOffline = true;
+              if (lastActiveTs != null &&
+                  now.difference(lastActiveTs.toDate()).inMinutes < 5) {
+                isOffline = false;
               }
+
+              allUsers.add({
+                'id': doc.id,
+                'name': data['fullName'] ?? 'Học viên ẩn danh',
+                'email': data['email'] ?? '',
+                'lastActive': lastActiveTs?.toDate(),
+                'status': isOffline ? 'offline' : action,
+              });
             }
 
             int idle = allUsers.where((u) => u['status'] == 'idle').length;
@@ -891,7 +921,286 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // 4. Widget Chip trạng thái màu sắc
+  // 4. Hiển thị thông tin chi tiết của học viên
+  Future<void> _showUserInfoDialog(String userId) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          titlePadding: const EdgeInsets.fromLTRB(24, 22, 16, 8),
+          contentPadding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: _primaryDark.withOpacity(0.08),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.person_outline, color: _primaryDark),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Thông tin tài khoản',
+                  style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+              future: FirebaseFirestore.instance
+                  .collection('Users')
+                  .doc(userId)
+                  .get(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const SizedBox(
+                    height: 180,
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
+
+                if (snapshot.hasError) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Text(
+                      'Không thể tải thông tin tài khoản.',
+                      style: TextStyle(color: Colors.red),
+                    ),
+                  );
+                }
+
+                final data = snapshot.data?.data();
+                if (data == null) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Text('Tài khoản không còn tồn tại.'),
+                  );
+                }
+
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildUserInfoRow(
+                      Icons.email_outlined,
+                      'Email',
+                      _profileText(data['email']),
+                    ),
+                    _buildUserInfoRow(
+                      Icons.badge_outlined,
+                      'Họ và tên',
+                      _profileText(data['fullName']),
+                    ),
+                    _buildUserInfoRow(
+                      Icons.wc_outlined,
+                      'Giới tính',
+                      _profileText(data['gender']),
+                    ),
+                    _buildUserInfoRow(
+                      Icons.cake_outlined,
+                      'Ngày sinh',
+                      _formatDateOfBirth(data['dob']),
+                    ),
+                    _buildUserInfoRow(
+                      Icons.phone_outlined,
+                      'Số điện thoại',
+                      _profileText(data['phone']),
+                      showDivider: false,
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+          actions: [
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _primaryDark,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Đóng'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildUserInfoRow(
+    IconData icon,
+    String label,
+    String value, {
+    bool showDivider = true,
+  }) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 11),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, size: 20, color: _primaryDark),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: 105,
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.grey,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  value,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (showDivider) const Divider(height: 1),
+      ],
+    );
+  }
+
+  String _profileText(dynamic value) {
+    final text = value?.toString().trim() ?? '';
+    return text.isEmpty ? 'Chưa cập nhật' : text;
+  }
+
+  String _formatDateOfBirth(dynamic value) {
+    if (value == null) return 'Chưa cập nhật';
+
+    DateTime? date;
+    if (value is Timestamp) {
+      date = value.toDate();
+    } else if (value is DateTime) {
+      date = value;
+    } else if (value is String) {
+      date = DateTime.tryParse(value);
+      if (date == null && value.trim().isNotEmpty) return value.trim();
+    }
+
+    if (date == null) return 'Chưa cập nhật';
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    return '$day/$month/${date.year}';
+  }
+
+  // 5. Xác nhận và xóa dữ liệu tài khoản học viên
+  Future<void> _confirmDeleteUser(Map<String, dynamic> user) async {
+    final userId = user['id'] as String?;
+    if (userId == null || userId.isEmpty) return;
+
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Xóa tài khoản?'),
+        content: Text(
+          'Bạn có chắc muốn xóa tài khoản '
+          '"${_profileText(user['name'])}"?\n\n'
+          'Hồ sơ và dữ liệu hoạt động của học viên sẽ bị xóa.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Hủy'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Xóa'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldDelete != true || !mounted) return;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      await _deleteUserData(userId);
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Đã xóa tài khoản học viên.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Không thể xóa tài khoản: $error'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _deleteUserData(String userId) async {
+    final firestore = FirebaseFirestore.instance;
+    final userRef = firestore.collection('Users').doc(userId);
+
+    // Firestore không tự xóa các subcollection khi xóa document cha.
+    await _deleteQuery(userRef.collection('AIChatHistory'));
+    await _deleteQuery(userRef.collection('LoginHistory'));
+
+    // Xóa lịch sử thi ở collection cấp cao.
+    await _deleteQuery(
+      firestore.collection('ExamHistory').where('userId', isEqualTo: userId),
+    );
+
+    final batch = firestore.batch();
+    batch.delete(firestore.collection('UserProgress').doc(userId));
+    batch.delete(userRef);
+    await batch.commit();
+  }
+
+  Future<void> _deleteQuery(Query<Map<String, dynamic>> query) async {
+    while (true) {
+      final snapshot = await query.limit(400).get();
+      if (snapshot.docs.isEmpty) return;
+
+      final batch = FirebaseFirestore.instance.batch();
+      for (final doc in snapshot.docs) {
+        batch.delete(doc.reference);
+      }
+      await batch.commit();
+
+      if (snapshot.docs.length < 400) return;
+    }
+  }
+
+  // 6. Widget Chip trạng thái màu sắc
   Widget _buildStatChip(String text, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

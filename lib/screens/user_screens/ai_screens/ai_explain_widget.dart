@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter_markdown_latex/flutter_markdown_latex.dart';
+import 'package:markdown/markdown.dart' as md;
 import '../../../services/ai_tutor_service.dart';
 
 class AITutorExplainButton extends StatelessWidget {
@@ -157,7 +159,22 @@ class _AIExplanationSheetState extends State<_AIExplanationSheet> {
                 : SingleChildScrollView(
                     padding: const EdgeInsets.all(20),
                     child: MarkdownBody(
+                      selectable: true,
                       data: _aiResponse,
+                      builders: {
+                        'latex': LatexElementBuilder(
+                          textStyle: const TextStyle(
+                            fontSize: 15,
+                            height: 1.5,
+                            color: Colors.black87,
+                          ),
+                          textScaleFactor: 1,
+                        ),
+                      },
+                      extensionSet: md.ExtensionSet(
+                        [LatexBlockSyntax()],
+                        [LatexInlineSyntax()],
+                      ),
                       styleSheet: MarkdownStyleSheet(
                         p: const TextStyle(
                           fontSize: 15,

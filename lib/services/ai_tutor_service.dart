@@ -178,6 +178,14 @@ class AITutorService {
         2. Lỗi tư duy hoặc kiến thức nào khiến học viên chọn sai?
         3. Đưa ra một mẹo (tip) nhỏ để ghi nhớ và không sai lại ở dạng bài này.
 
+        QUY TẮC ĐỊNH DẠNG BẮT BUỘC:
+        - Trả lời bằng Markdown rõ ràng, dễ đọc.
+        - Công thức ngắn nằm cùng dòng phải đặt chính xác trong \$...\$.
+        - Công thức dài hoặc cần xuống dòng phải đặt chính xác trong \$\$...\$\$.
+        - Không đặt công thức trong dấu backtick hoặc khối code.
+        - Không viết ký hiệu LaTeX nằm ngoài cặp dấu \$.
+        - Không giải thích về LaTeX hoặc Markdown trong câu trả lời.
+
         - Câu hỏi: $questionContent
         - Đáp án đúng: $correctAnswer
         - Đáp án học viên đã chọn: $userAnswer
