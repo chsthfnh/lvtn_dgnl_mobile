@@ -24,6 +24,16 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
   List<Map<String, String>> _images = [];
   bool _isLoading = true;
 
+  SettableMetadata _metadataForImage(String fileName) {
+    final extension = fileName.split('.').last.toLowerCase();
+    final contentType = extension == 'png' ? 'image/png' : 'image/jpeg';
+
+    return SettableMetadata(
+      contentType: contentType,
+      cacheControl: 'public,max-age=604800',
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -42,14 +52,13 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
           .listAll();
       final List<Map<String, String>> fetchedImages = [];
 
-      for (var item in result.items) {
-        final url = await item.getDownloadURL();
-        fetchedImages.add({
-          'name': item.name,
-          'url': url,
-          'fullPath': item.fullPath,
-        });
-      }
+      final imageEntries = await Future.wait(
+        result.items.map((item) async {
+          final url = await item.getDownloadURL();
+          return {'name': item.name, 'url': url, 'fullPath': item.fullPath};
+        }),
+      );
+      fetchedImages.addAll(imageEntries);
 
       if (mounted) {
         setState(() {
@@ -96,11 +105,12 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
         } catch (_) {
           // Báo lỗi nghĩa là file chưa tồn tại -> An toàn để upload
         }
+        final metadata = _metadataForImage(fileName);
         if (kIsWeb) {
-          await ref.putData(file.bytes!); // Web
+          await ref.putData(file.bytes!, metadata); // Web
         } else {
           File imageFile = File(file.path!);
-          await ref.putFile(imageFile); // App
+          await ref.putFile(imageFile, metadata); // App
         }
       }
 
@@ -163,7 +173,7 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
       final data = await oldRef.getData();
       if (data != null) {
         // 3. Đẩy mảng Byte đó lên đường dẫn tên mới
-        await newRef.putData(data);
+        await newRef.putData(data, _metadataForImage(newName));
         // 4. Xóa file tên cũ đi
         await oldRef.delete();
 

@@ -1,7 +1,11 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter_markdown_latex/flutter_markdown_latex.dart';
+import 'package:markdown/markdown.dart' as md;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../services/ai_tutor_service.dart';
@@ -29,8 +33,11 @@ class _AIOcrScannerSheetState extends State<AIOcrScannerSheet> {
   final AITutorService _aiService = AITutorService();
 
   bool _isProcessingImage = false;
+  bool _isNormalizingLatex = false;
   bool _isWaitingForAI = false;
   String _aiResponse = '';
+  Uint8List? _selectedImageBytes;
+  String _selectedImageMimeType = 'image/jpeg';
 
   @override
   void dispose() {
@@ -40,7 +47,11 @@ class _AIOcrScannerSheetState extends State<AIOcrScannerSheet> {
 
   // --- 1. HÀM CHỤP/CHỌN ẢNH VÀ QUÉT CHỮ ---
   Future<void> _processImage(ImageSource source) async {
-    final XFile? pickedFile = await _picker.pickImage(source: source);
+    final XFile? pickedFile = await _picker.pickImage(
+      source: source,
+      maxWidth: 1800,
+      imageQuality: 88,
+    );
     if (pickedFile == null) return;
 
     setState(() {
@@ -48,31 +59,101 @@ class _AIOcrScannerSheetState extends State<AIOcrScannerSheet> {
       _aiResponse = ''; // Xóa kết quả cũ nếu có
     });
 
+    TextRecognizer? textRecognizer;
     try {
+      _selectedImageBytes = await pickedFile.readAsBytes();
+      final lowerName = pickedFile.name.toLowerCase();
+      _selectedImageMimeType = lowerName.endsWith('.png')
+          ? 'image/png'
+          : lowerName.endsWith('.webp')
+          ? 'image/webp'
+          : 'image/jpeg';
       final inputImage = InputImage.fromFilePath(pickedFile.path);
-      final textRecognizer = TextRecognizer(
-        script: TextRecognitionScript.latin,
-      );
+      textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
       final RecognizedText recognizedText = await textRecognizer.processImage(
         inputImage,
       );
-      textRecognizer.close();
-
+      if (!mounted) return;
+      final cleanedText = recognizedText.text
+          .split(RegExp(r'\r?\n'))
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty)
+          .join('\n');
       setState(() {
-        _textCtrl.text = recognizedText.text;
+        _textCtrl.text = cleanedText;
         _isProcessingImage = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isProcessingImage = false;
-        _textCtrl.text = 'Lỗi khi quét ảnh: $e';
       });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Không thể quét ảnh: $e')));
+    } finally {
+      await textRecognizer?.close();
+    }
+  }
+
+  Future<void> _normalizeLatex() async {
+    final sourceText = _textCtrl.text.trim();
+    if (sourceText.length < 5) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Hãy quét câu hỏi trước.')));
+      return;
+    }
+
+    FocusScope.of(context).unfocus();
+    setState(() => _isNormalizingLatex = true);
+    try {
+      final normalized = await _aiService.normalizeScannedTextToLatex(
+        ocrText: sourceText,
+        imageBytes: _selectedImageBytes,
+        imageMimeType: _selectedImageMimeType,
+      );
+      if (!mounted) return;
+      setState(() {
+        _textCtrl.text = normalized;
+        _textCtrl.selection = TextSelection.collapsed(
+          offset: _textCtrl.text.length,
+        );
+        _isNormalizingLatex = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Đã chuẩn hóa công thức. Hãy kiểm tra bản xem trước.'),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isNormalizingLatex = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Không thể chuẩn hóa công thức. Kiểm tra mạng và thử lại.',
+          ),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 
   // --- 2. HÀM KIỂM TRA LƯỢT DÙNG & NHỜ AI GIẢI ---
   Future<void> _askAITutor() async {
-    if (_textCtrl.text.trim().isEmpty) return;
+    final recognizedText = _textCtrl.text.trim();
+    if (recognizedText.length < 12) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nội dung quá ngắn. Hãy chụp rõ cả đề và các đáp án.'),
+        ),
+      );
+      return;
+    }
 
     FocusScope.of(context).unfocus(); // Đóng bàn phím
 
@@ -118,16 +199,9 @@ class _AIOcrScannerSheetState extends State<AIOcrScannerSheet> {
         return;
       }
 
-      // NẾU CÒN LƯỢT -> GỌI AI GEMINI
-      String prompt =
-          '''
-Dưới đây là một câu hỏi trắc nghiệm tôi vừa chụp được. Hãy đóng vai AI Tutor, giải thích từng bước cực kỳ chi tiết và chọn ra đáp án đúng nhất.
-Nội dung câu hỏi:
-"${_textCtrl.text}"
-''';
-      String response = await _aiService.sendMessage(
-        prompt,
-        'Quét ảnh bằng AI',
+      // Dùng phiên AI độc lập, không lẫn lịch sử chat/học lực của người dùng.
+      final response = await _aiService.solveScannedQuestion(
+        recognizedText: recognizedText,
       );
 
       // LƯU LẠI LƯỢT DÙNG MỚI VÀO FIREBASE
@@ -153,11 +227,21 @@ Nội dung câu hỏi:
         );
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isWaitingForAI = false;
-        _aiResponse =
-            'Có lỗi xảy ra khi kết nối máy chủ. Vui lòng thử lại sau.';
+        _aiResponse = '';
       });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e is FormatException
+                ? e.message.toString()
+                : 'Không thể kết nối AI. Kiểm tra mạng rồi thử lại.',
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -165,7 +249,7 @@ Nội dung câu hỏi:
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: MediaQuery.of(context).size.height * 0.85,
+      height: MediaQuery.of(context).size.height * 0.92,
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -258,13 +342,15 @@ Nội dung câu hỏi:
 
                   if (!_isProcessingImage) ...[
                     const Text(
-                      'Văn bản nhận diện (Có thể chỉnh sửa nếu sai):',
+                      'Văn bản/LaTeX nhận diện (có thể chỉnh sửa):',
                       style: TextStyle(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 8),
                     TextField(
                       controller: _textCtrl,
-                      maxLines: 5,
+                      onChanged: (_) => setState(() {}),
+                      minLines: 6,
+                      maxLines: 12,
                       decoration: InputDecoration(
                         hintText: 'Chữ trong ảnh sẽ hiện ở đây...',
                         filled: true,
@@ -274,10 +360,75 @@ Nội dung câu hỏi:
                         ),
                       ),
                     ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed:
+                          _isNormalizingLatex || _textCtrl.text.trim().isEmpty
+                          ? null
+                          : _normalizeLatex,
+                      icon: _isNormalizingLatex
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.functions),
+                      label: Text(
+                        _isNormalizingLatex
+                            ? 'Đang chuẩn hóa công thức...'
+                            : 'Chuẩn hóa công thức LaTeX',
+                      ),
+                    ),
+                    if (_textCtrl.text.trim().isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.blueGrey.shade100),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Bản xem trước công thức:',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF002045),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            MarkdownBody(
+                              data: _textCtrl.text,
+                              selectable: true,
+                              extensionSet: md.ExtensionSet(
+                                [LatexBlockSyntax()],
+                                [LatexInlineSyntax()],
+                              ),
+                              builders: {
+                                'latex': LatexElementBuilder(
+                                  textStyle: const TextStyle(
+                                    fontSize: 16,
+                                    color: Color(0xFF1D2939),
+                                  ),
+                                  textScaleFactor: 1.05,
+                                ),
+                              },
+                              styleSheet: MarkdownStyleSheet(
+                                p: const TextStyle(fontSize: 15, height: 1.5),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 16),
 
                     ElevatedButton.icon(
-                      onPressed: _isWaitingForAI ? null : _askAITutor,
+                      onPressed: _isWaitingForAI || _isNormalizingLatex
+                          ? null
+                          : _askAITutor,
                       icon: _isWaitingForAI
                           ? const SizedBox(
                               width: 20,
@@ -320,7 +471,30 @@ Nội dung câu hỏi:
                         color: Colors.orange.shade50,
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: MarkdownBody(data: _aiResponse),
+                      child: MarkdownBody(
+                        data: _aiResponse,
+                        selectable: true,
+                        extensionSet: md.ExtensionSet(
+                          [LatexBlockSyntax()],
+                          [LatexInlineSyntax()],
+                        ),
+                        builders: {
+                          'latex': LatexElementBuilder(
+                            textStyle: const TextStyle(
+                              fontSize: 16,
+                              color: Color(0xFF1D2939),
+                            ),
+                            textScaleFactor: 1.05,
+                          ),
+                        },
+                        styleSheet: MarkdownStyleSheet(
+                          p: const TextStyle(fontSize: 16, height: 1.55),
+                          listBullet: const TextStyle(
+                            fontSize: 16,
+                            color: Color(0xFFE65100),
+                          ),
+                        ),
+                      ),
                     ),
                   ],
                 ],

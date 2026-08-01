@@ -1,12 +1,14 @@
+import 'dart:async';
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../../../services/ai_tutor_service.dart';
 
 class AIPerformanceAnalysisCard extends StatefulWidget {
-  // Biến này sẽ nhận chuỗi tóm tắt dữ liệu từ màn hình Thống Kê truyền sang
   final String historyStatsText;
-
   const AIPerformanceAnalysisCard({super.key, required this.historyStatsText});
 
   @override
@@ -16,11 +18,22 @@ class AIPerformanceAnalysisCard extends StatefulWidget {
 
 class _AIPerformanceAnalysisCardState extends State<AIPerformanceAnalysisCard> {
   final AITutorService _aiService = AITutorService();
-
   String _analysisReport = '';
   String _lastUpdatedTime = '';
   int _refreshCount = 0;
   bool _isLoading = true;
+  bool _isRefreshing = false;
+
+  String get _uid => FirebaseAuth.instance.currentUser?.uid ?? 'guest';
+  String _key(String suffix) => 'ai_report_${_uid}_$suffix';
+  String get _today {
+    final now = DateTime.now();
+    return '${now.year}-${now.month}-${now.day}';
+  }
+
+  bool get _hasData => !RegExp(
+    r'Tổng số câu đã làm:\s*0\s*câu',
+  ).hasMatch(widget.historyStatsText);
 
   @override
   void initState() {
@@ -28,77 +41,92 @@ class _AIPerformanceAnalysisCardState extends State<AIPerformanceAnalysisCard> {
     _loadCacheOrFetchAI();
   }
 
-  // ĐÃ XÓA: Hàm didUpdateWidget cũ để tránh việc API bị gọi lại liên tục
-  // mỗi khi dữ liệu thống kê bên ngoài thay đổi. Việc làm mới giờ do User quyết định.
+  @override
+  void didUpdateWidget(covariant AIPerformanceAnalysisCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.historyStatsText != widget.historyStatsText) {
+      _loadCacheOrFetchAI();
+    }
+  }
 
-  // --- 1. KIỂM TRA CACHE TRƯỚC KHI GỌI AI ---
   Future<void> _loadCacheOrFetchAI() async {
     final prefs = await SharedPreferences.getInstance();
-
-    // Lấy ngày hôm nay
-    DateTime now = DateTime.now();
-    String today = "${now.year}-${now.month}-${now.day}";
-
-    String cachedDate = prefs.getString('ai_report_date') ?? '';
-
-    // Nếu đã cập nhật trong hôm nay -> Lấy từ Cache
-    if (cachedDate == today) {
+    final cachedText = prefs.getString(_key('text')) ?? '';
+    final cachedStats = prefs.getString(_key('stats')) ?? '';
+    final cachedDate = prefs.getString(_key('date')) ?? '';
+    if (mounted && cachedText.isNotEmpty) {
       setState(() {
-        _analysisReport =
-            prefs.getString('ai_report_text') ?? 'Không có dữ liệu.';
-        _lastUpdatedTime = prefs.getString('ai_report_time') ?? '';
-        _refreshCount = prefs.getInt('ai_report_count') ?? 0;
+        _analysisReport = cachedText;
+        _lastUpdatedTime = prefs.getString(_key('time')) ?? '';
+        _refreshCount = prefs.getInt(_key('count')) ?? 0;
         _isLoading = false;
       });
-    } else {
-      // Sang ngày mới -> Tự động gọi API
-      await _fetchNewAnalysis(prefs, today, 0);
     }
-  }
 
-  // --- 2. GỌI AI VÀ LƯU VÀO CACHE ---
-  Future<void> _fetchNewAnalysis(
-    SharedPreferences prefs,
-    String todayDate,
-    int newRefreshCount,
-  ) async {
-    setState(() => _isLoading = true);
-
-    try {
-      String result = await _aiService.analyzePerformance(
-        historyStatsText: widget.historyStatsText,
-      );
-
-      DateTime now = DateTime.now();
-      String timeStr =
-          "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')} ngày ${now.day}/${now.month}";
-
-      // Dùng Key khác ('ai_report_...') để không bị đè lên Key của Gợi ý học tập
-      await prefs.setString('ai_report_date', todayDate);
-      await prefs.setString('ai_report_text', result);
-      await prefs.setString('ai_report_time', timeStr);
-      await prefs.setInt('ai_report_count', newRefreshCount);
-
-      if (mounted) {
-        setState(() {
-          _analysisReport = result;
-          _lastUpdatedTime = timeStr;
-          _refreshCount = newRefreshCount;
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
+    if (!_hasData) {
+      if (mounted && cachedText.isEmpty) {
         setState(() {
           _analysisReport =
-              'Có lỗi khi phân tích dữ liệu. Vui lòng thử lại sau.';
+              'Chưa có đủ dữ liệu để phân tích. Hãy hoàn thành ít nhất một bài luyện tập hoặc đề thi.';
           _isLoading = false;
+        });
+      }
+      return;
+    }
+    if (cachedDate == _today &&
+        cachedStats == widget.historyStatsText &&
+        cachedText.isNotEmpty) {
+      return;
+    }
+    unawaited(_fetchNewAnalysis(prefs, 0, blockUi: cachedText.isEmpty));
+  }
+
+  Future<void> _fetchNewAnalysis(
+    SharedPreferences prefs,
+    int newRefreshCount, {
+    bool blockUi = false,
+  }) async {
+    if (mounted) {
+      setState(() {
+        _isLoading = blockUi && _analysisReport.isEmpty;
+        _isRefreshing = true;
+      });
+    }
+    try {
+      final result = await _aiService.analyzePerformance(
+        historyStatsText: widget.historyStatsText,
+      );
+      final now = DateTime.now();
+      final time =
+          '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')} ngày ${now.day}/${now.month}';
+      await prefs.setString(_key('date'), _today);
+      await prefs.setString(_key('stats'), widget.historyStatsText);
+      await prefs.setString(_key('text'), result);
+      await prefs.setString(_key('time'), time);
+      await prefs.setInt(_key('count'), newRefreshCount);
+      if (!mounted) return;
+      setState(() {
+        _analysisReport = result;
+        _lastUpdatedTime = time;
+        _refreshCount = newRefreshCount;
+      });
+    } catch (_) {
+      if (mounted && _analysisReport.isEmpty) {
+        setState(
+          () => _analysisReport =
+              'Chưa thể kết nối AI. Dữ liệu thống kê vẫn được hiển thị bình thường.',
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isRefreshing = false;
         });
       }
     }
   }
 
-  // --- 3. XỬ LÝ NÚT LÀM MỚI ---
   Future<void> _handleRefreshClick() async {
     if (_refreshCount >= 3) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -109,15 +137,11 @@ class _AIPerformanceAnalysisCardState extends State<AIPerformanceAnalysisCard> {
       );
       return;
     }
-
+    if (!_hasData) return;
     final prefs = await SharedPreferences.getInstance();
-    DateTime now = DateTime.now();
-    String today = "${now.year}-${now.month}-${now.day}";
-
-    await _fetchNewAnalysis(prefs, today, _refreshCount + 1);
+    await _fetchNewAnalysis(prefs, _refreshCount + 1);
   }
 
-  // --- 4. GIAO DIỆN ---
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -163,58 +187,49 @@ class _AIPerformanceAnalysisCardState extends State<AIPerformanceAnalysisCard> {
                   ),
                 ),
               ),
+              if (_isRefreshing)
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
             ],
           ),
           const SizedBox(height: 16),
           const Divider(height: 1),
           const SizedBox(height: 16),
-
-          _isLoading
-              ? const Center(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 20),
-                    child: Column(
-                      children: [
-                        CircularProgressIndicator(color: Color(0xFF002045)),
-                        SizedBox(height: 12),
-                        Text(
-                          'AI đang tổng hợp và đánh giá dữ liệu...',
-                          style: TextStyle(
-                            color: Colors.grey,
-                            fontStyle: FontStyle.italic,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : MarkdownBody(
-                  data: _analysisReport,
-                  styleSheet: MarkdownStyleSheet(
-                    p: const TextStyle(
-                      fontSize: 15,
-                      height: 1.6,
-                      color: Colors.black87,
-                    ),
-                    h1: const TextStyle(
-                      color: Color(0xFF002045),
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    h2: const TextStyle(
-                      color: Color(0xFF002045),
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    strong: const TextStyle(
-                      color: Color(0xFFE65100),
-                      fontWeight: FontWeight.bold,
-                    ),
-                    listBullet: const TextStyle(color: Color(0xFF002045)),
-                  ),
+          if (_isLoading)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 20),
+                child: CircularProgressIndicator(color: Color(0xFF002045)),
+              ),
+            )
+          else
+            MarkdownBody(
+              data: _analysisReport,
+              styleSheet: MarkdownStyleSheet(
+                p: const TextStyle(
+                  fontSize: 15,
+                  height: 1.6,
+                  color: Colors.black87,
                 ),
-
-          // --- FOOTER: CHỮ MỜ & NÚT RESTART ---
+                h1: const TextStyle(
+                  color: Color(0xFF002045),
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+                h2: const TextStyle(
+                  color: Color(0xFF002045),
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+                strong: const TextStyle(
+                  color: Color(0xFFE65100),
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
           if (!_isLoading) ...[
             const SizedBox(height: 16),
             const Divider(height: 1, color: Colors.black12),
@@ -222,17 +237,20 @@ class _AIPerformanceAnalysisCardState extends State<AIPerformanceAnalysisCard> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  'Cập nhật: $_lastUpdatedTime',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Colors.black38,
-                    fontStyle: FontStyle.italic,
+                Flexible(
+                  child: Text(
+                    _lastUpdatedTime.isEmpty
+                        ? 'Chưa có bản phân tích AI'
+                        : 'Cập nhật: $_lastUpdatedTime',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Colors.black38,
+                      fontStyle: FontStyle.italic,
+                    ),
                   ),
                 ),
                 InkWell(
-                  onTap: _handleRefreshClick,
-                  borderRadius: BorderRadius.circular(8),
+                  onTap: _isRefreshing ? null : _handleRefreshClick,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,

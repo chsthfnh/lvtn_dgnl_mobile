@@ -1,13 +1,18 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 
+import '../../../services/hive_service.dart';
+
 class OfflineRealExamScreen extends StatefulWidget {
+  final String examId;
   final Map<String, dynamic> examInfo;
   final List<Map<String, dynamic>> questions;
 
   const OfflineRealExamScreen({
     super.key,
+    required this.examId,
     required this.examInfo,
     required this.questions,
   });
@@ -17,49 +22,122 @@ class OfflineRealExamScreen extends StatefulWidget {
 }
 
 class _OfflineRealExamScreenState extends State<OfflineRealExamScreen> {
+  final HiveService _hiveService = HiveService();
   final Color _primaryColor = const Color(0xFF002045);
   final Color _activeColor = const Color(0xFF006E2F);
 
   int _currentIndex = 0;
   Map<int, int> _userAnswers = {};
-  late Timer _timer;
+  Timer? _timer;
   int _secondsRemaining = 0;
+  bool _isRestoring = true;
+  bool _submitted = false;
+  Future<void> _saveQueue = Future<void>.value();
 
   @override
   void initState() {
     super.initState();
-    // Lấy thời gian từ data offline
-    int minutes = widget.examInfo['thoiGian'] ?? 150;
+    final minutes = (widget.examInfo['thoiGian'] as num?)?.toInt() ?? 150;
     _secondsRemaining = minutes * 60;
+    _restoreProgress();
+  }
+
+  Future<void> _restoreProgress() async {
+    await _hiveService.initialize();
+    final progress = _hiveService.getOfflineProgress(widget.examId);
+    if (progress != null) {
+      final rawAnswers = <dynamic, dynamic>{};
+      final storedAnswers = progress['userAnswers'];
+      if (storedAnswers is Map) {
+        rawAnswers.addAll(storedAnswers);
+      }
+      _userAnswers = {
+        for (final entry in rawAnswers.entries)
+          if (int.tryParse(entry.key.toString()) != null && entry.value is num)
+            int.parse(entry.key.toString()): (entry.value as num).toInt(),
+      };
+      final restoredIndex = (progress['currentIndex'] as num?)?.toInt() ?? 0;
+      _currentIndex = restoredIndex
+          .clamp(0, widget.questions.isEmpty ? 0 : widget.questions.length - 1)
+          .toInt();
+      _secondsRemaining =
+          (progress['secondsRemaining'] as num?)?.toInt() ?? _secondsRemaining;
+    }
+    if (!mounted) return;
+    setState(() => _isRestoring = false);
     _startTimer();
   }
 
   void _startTimer() {
+    _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (_secondsRemaining > 0) {
-        setState(() => _secondsRemaining--);
-      } else {
-        _timer.cancel();
+      if (!mounted) return;
+      if (_secondsRemaining <= 0) {
+        timer.cancel();
         _autoSubmitExam();
+        return;
       }
+      setState(() => _secondsRemaining--);
+      if (_secondsRemaining % 10 == 0) unawaited(_saveProgress());
     });
+  }
+
+  Future<void> _saveProgress() {
+    if (_submitted) return Future<void>.value();
+    final index = _currentIndex;
+    final answers = Map<int, int>.from(_userAnswers);
+    final seconds = _secondsRemaining;
+    _saveQueue = _saveQueue.then((_) {
+      if (_submitted) return Future<void>.value();
+      return _hiveService.saveOfflineProgress(
+        examId: widget.examId,
+        currentIndex: index,
+        userAnswers: answers,
+        secondsRemaining: seconds,
+      );
+    });
+    return _saveQueue;
   }
 
   @override
   void dispose() {
-    _timer.cancel();
+    _timer?.cancel();
+    if (!_submitted) unawaited(_saveProgress());
     super.dispose();
   }
 
   String _formatTime(int seconds) {
-    int m = seconds ~/ 60;
-    int s = seconds % 60;
-    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+    final minutes = seconds ~/ 60;
+    final remainSeconds = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${remainSeconds.toString().padLeft(2, '0')}';
   }
 
-  // --- HÀM NỘP BÀI VÀ CHẤM ĐIỂM OFFLINE ---
-  void _submitExam() {
-    showDialog(
+  Future<bool> _confirmExit() async {
+    final leave = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Tạm dừng làm bài?'),
+        content: const Text(
+          'Đáp án, câu hiện tại và thời gian còn lại sẽ được lưu trên thiết bị.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Ở lại'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Lưu và thoát'),
+          ),
+        ],
+      ),
+    );
+    if (leave == true) await _saveProgress();
+    return leave == true;
+  }
+
+  Future<void> _submitExam() async {
+    final accepted = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
@@ -73,65 +151,64 @@ class _OfflineRealExamScreenState extends State<OfflineRealExamScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Làm tiếp', style: TextStyle(color: Colors.grey)),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Làm tiếp'),
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _activeColor,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () {
-              Navigator.pop(context); // Đóng dialog xác nhận
-              _calculateAndShowResults();
-            },
-            child: const Text('NỘP BÀI'),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: _activeColor),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Nộp bài'),
           ),
         ],
       ),
     );
+    if (accepted == true) await _calculateAndShowResults();
   }
 
-  void _autoSubmitExam() {
+  Future<void> _autoSubmitExam() async {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Đã hết thời gian làm bài! Tự động nộp bài.'),
+        content: Text('Đã hết thời gian. Hệ thống tự động nộp bài.'),
         backgroundColor: Colors.red,
       ),
     );
-    _calculateAndShowResults();
+    await _calculateAndShowResults();
   }
 
-  void _calculateAndShowResults() {
-    _timer.cancel();
-    int correctCount = 0;
-
-    for (int i = 0; i < widget.questions.length; i++) {
-      String correctAnsLetter = widget.questions[i]['correctAnswer'] ?? 'A';
-      int? userAnsIndex = _userAnswers[i];
-      if (userAnsIndex != null) {
-        String userAnsLetter = String.fromCharCode(65 + userAnsIndex);
-        if (userAnsLetter == correctAnsLetter) correctCount++;
+  Future<void> _calculateAndShowResults() async {
+    _timer?.cancel();
+    await _saveQueue;
+    _submitted = true;
+    var correctCount = 0;
+    for (var index = 0; index < widget.questions.length; index++) {
+      final correct = (widget.questions[index]['correctAnswer'] ?? 'A')
+          .toString()
+          .trim()
+          .toUpperCase();
+      final selected = _userAnswers[index];
+      if (selected != null && String.fromCharCode(65 + selected) == correct) {
+        correctCount++;
       }
     }
 
-    // Hiển thị Dialog kết quả thay vì chuyển màn hình để tránh phức tạp hóa
-    showDialog(
+    await _hiveService.saveOfflineResult(
+      examId: widget.examId,
+      correctAnswers: correctCount,
+      totalQuestions: widget.questions.length,
+    );
+    if (!mounted) return;
+
+    await showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
-            const Icon(Icons.emoji_events, color: Colors.orange, size: 28),
+            const Icon(Icons.emoji_events, color: Colors.orange),
             const SizedBox(width: 8),
-            Text(
-              'Kết quả bài thi',
-              style: TextStyle(
-                color: _primaryColor,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+            Text('Kết quả', style: TextStyle(color: _primaryColor)),
           ],
         ),
         content: Column(
@@ -139,298 +216,348 @@ class _OfflineRealExamScreenState extends State<OfflineRealExamScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Bạn đã trả lời đúng $correctCount / ${widget.questions.length} câu.',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              '$correctCount/${widget.questions.length} câu đúng',
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             const Text(
-              '(Lưu ý: Để đảm bảo tính công bằng, kết quả làm bài Offline sẽ không được ghi nhận vào Bảng xếp hạng hay Thống kê trực tuyến).',
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.grey,
-                fontStyle: FontStyle.italic,
-              ),
+              'Kết quả đã lưu trên thiết bị. Khi làm offline, kết quả không đồng bộ lên bảng xếp hạng trực tuyến.',
+              style: TextStyle(color: Color(0xFF667085), height: 1.4),
             ),
           ],
         ),
         actions: [
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _primaryColor,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () {
-              Navigator.pop(ctx); // Đóng Dialog Kết quả
-              Navigator.pop(
-                context,
-              ); // Thoát khỏi màn hình thi, về lại list Offline
-            },
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Hoàn tất'),
           ),
         ],
+      ),
+    );
+    if (mounted) Navigator.pop(context);
+  }
+
+  void _goToQuestion(int index) {
+    setState(() => _currentIndex = index);
+    unawaited(_saveProgress());
+  }
+
+  void _showQuestionPalette() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Danh sách câu hỏi',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 14),
+              Flexible(
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 6,
+                    mainAxisSpacing: 8,
+                    crossAxisSpacing: 8,
+                  ),
+                  itemCount: widget.questions.length,
+                  itemBuilder: (_, index) {
+                    final answered = _userAnswers.containsKey(index);
+                    final current = index == _currentIndex;
+                    return OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        backgroundColor: current
+                            ? _primaryColor
+                            : answered
+                            ? const Color(0xFFE8F5E9)
+                            : Colors.white,
+                        foregroundColor: current
+                            ? Colors.white
+                            : answered
+                            ? _activeColor
+                            : _primaryColor,
+                      ),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _goToQuestion(index);
+                      },
+                      child: Text('${index + 1}'),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (widget.questions.isEmpty)
+    if (_isRestoring) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (widget.questions.isEmpty) {
       return const Scaffold(
-        body: Center(child: Text('Đề thi không có dữ liệu')),
+        body: Center(child: Text('Đề thi không có dữ liệu.')),
       );
+    }
 
-    Map<String, dynamic> currentData = widget.questions[_currentIndex];
-    String qText = currentData['noiDungCauHoi'] ?? '';
-    List<dynamic> options = currentData['options'] ?? [];
-    String noiDungChung = currentData['noiDungChung'] ?? '';
+    final currentData = widget.questions[_currentIndex];
+    final questionText = (currentData['noiDungCauHoi'] ?? '').toString();
+    final options = (currentData['options'] as List?) ?? const [];
+    final commonContent = (currentData['noiDungChung'] ?? '').toString();
+    final progress = (_currentIndex + 1) / widget.questions.length;
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FF),
-      body: SafeArea(
-        child: Column(
-          children: [
-            // HEADER
-            Container(
-              height: 70,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              color: Colors.white,
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: Icon(Icons.close, color: _primaryColor),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      widget.examInfo['tenDeThi'] ?? 'Đề thi Offline',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: _primaryColor,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.red.shade50,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      _formatTime(_secondsRemaining),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.red,
-                        fontSize: 16,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // BODY CÂU HỎI
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.grey.shade200),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Câu ${_currentIndex + 1} / ${widget.questions.length}',
-                        style: TextStyle(
-                          color: Colors.grey.shade500,
-                          fontWeight: FontWeight.bold,
+    return WillPopScope(
+      onWillPop: _confirmExit,
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF6F8FC),
+        body: SafeArea(
+          child: Column(
+            children: [
+              Container(
+                color: Colors.white,
+                padding: const EdgeInsets.fromLTRB(8, 8, 12, 10),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: Icon(Icons.close, color: _primaryColor),
+                          onPressed: () async {
+                            if (await _confirmExit() && mounted) {
+                              Navigator.pop(context);
+                            }
+                          },
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                      if (noiDungChung.isNotEmpty) ...[
+                        Expanded(
+                          child: Text(
+                            (widget.examInfo['tenDeThi'] ?? 'Đề thi offline')
+                                .toString(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold,
+                              color: _primaryColor,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Danh sách câu',
+                          onPressed: _showQuestionPalette,
+                          icon: const Icon(Icons.grid_view_rounded),
+                        ),
                         Container(
-                          padding: const EdgeInsets.all(12),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 7,
+                          ),
                           decoration: BoxDecoration(
-                            color: Colors.amber.shade50,
-                            borderRadius: BorderRadius.circular(8),
+                            color: Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(10),
                           ),
-                          child: _buildMathText(
-                            noiDungChung,
-                            style: const TextStyle(fontStyle: FontStyle.italic),
+                          child: Text(
+                            _formatTime(_secondsRemaining),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.red,
+                            ),
                           ),
                         ),
-                        const SizedBox(height: 12),
                       ],
-                      _buildMathText(
-                        qText,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black87,
+                    ),
+                    LinearProgressIndicator(value: progress, minHeight: 5),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFE4E7EC)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Câu ${_currentIndex + 1}/${widget.questions.length}',
+                              style: TextStyle(
+                                color: _primaryColor,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              'Đã làm ${_userAnswers.length} câu',
+                              style: const TextStyle(color: Color(0xFF667085)),
+                            ),
+                          ],
                         ),
-                      ),
-                      const SizedBox(height: 24),
-                      for (int i = 0; i < options.length; i++)
-                        _buildOptionTile(
-                          i,
-                          String.fromCharCode(65 + i),
-                          options[i].toString(),
+                        const SizedBox(height: 16),
+                        if (commonContent.isNotEmpty) ...[
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFFAEB),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: _buildMathText(commonContent),
+                          ),
+                          const SizedBox(height: 14),
+                        ],
+                        _buildMathText(
+                          questionText,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            height: 1.45,
+                          ),
                         ),
-                    ],
+                        const SizedBox(height: 22),
+                        for (var index = 0; index < options.length; index++)
+                          _buildOptionTile(
+                            index,
+                            String.fromCharCode(65 + index),
+                            options[index].toString(),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-
-            // BOTTOM NAVIGATION
-            Container(
-              padding: const EdgeInsets.all(20),
-              color: Colors.white,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: _currentIndex > 0
-                          ? () => setState(() => _currentIndex--)
-                          : null,
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+                color: Colors.white,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _currentIndex > 0
+                            ? () => _goToQuestion(_currentIndex - 1)
+                            : null,
+                        icon: const Icon(Icons.chevron_left),
+                        label: const Text('Quay lại'),
                       ),
-                      child: const Text('QUAY LẠI'),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _currentIndex < widget.questions.length - 1
-                        ? ElevatedButton(
-                            onPressed: () => setState(() => _currentIndex++),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _primaryColor,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                            ),
-                            child: const Text('TIẾP THEO'),
-                          )
-                        : ElevatedButton(
-                            onPressed: _submitExam,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.orange.shade800,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                            ),
-                            child: const Text('NỘP BÀI'),
-                          ),
-                  ),
-                ],
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          backgroundColor:
+                              _currentIndex < widget.questions.length - 1
+                              ? _primaryColor
+                              : Colors.orange.shade800,
+                        ),
+                        onPressed: _currentIndex < widget.questions.length - 1
+                            ? () => _goToQuestion(_currentIndex + 1)
+                            : _submitExam,
+                        icon: Icon(
+                          _currentIndex < widget.questions.length - 1
+                              ? Icons.chevron_right
+                              : Icons.send,
+                        ),
+                        label: Text(
+                          _currentIndex < widget.questions.length - 1
+                              ? 'Tiếp theo'
+                              : 'Nộp bài',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildOptionTile(int optionIndex, String letter, String content) {
-    bool isSelected = _userAnswers[_currentIndex] == optionIndex;
-    return GestureDetector(
-      onTap: () => setState(() => _userAnswers[_currentIndex] = optionIndex),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: isSelected ? _activeColor : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isSelected ? _activeColor : Colors.grey.shade300,
-            width: isSelected ? 2 : 1,
+    final selected = _userAnswers[_currentIndex] == optionIndex;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: 'Đáp án $letter',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          setState(() => _userAnswers[_currentIndex] = optionIndex);
+          unawaited(_saveProgress());
+        },
+        child: Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xFFE8F5E9) : Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected ? _activeColor : const Color(0xFFD0D5DD),
+              width: selected ? 2 : 1,
+            ),
           ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: isSelected ? Colors.white : _primaryColor,
-                ),
-              ),
-              child: Center(
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: selected ? _activeColor : Colors.transparent,
                 child: Text(
                   letter,
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
-                    color: isSelected ? Colors.white : _primaryColor,
+                    color: selected ? Colors.white : _primaryColor,
                   ),
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildMathText(
-                content,
-                style: TextStyle(
-                  fontSize: 16,
-                  color: isSelected ? Colors.white : Colors.black87,
-                ),
-              ),
-            ),
-          ],
+              const SizedBox(width: 12),
+              Expanded(child: _buildMathText(content)),
+              if (selected)
+                const Icon(Icons.check_circle, color: Color(0xFF006E2F)),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildMathText(String text, {TextStyle? style}) {
-    if (!text.contains('\$')) return Text(text, style: style);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        double maxWidth = constraints.maxWidth == double.infinity
-            ? MediaQuery.of(context).size.width - 60
-            : constraints.maxWidth;
-        List<String> parts = text.split('\$');
-        List<InlineSpan> spans = [];
-        for (int i = 0; i < parts.length; i++) {
-          if (i % 2 == 0) {
-            if (parts[i].isNotEmpty) spans.add(TextSpan(text: parts[i]));
-          } else {
-            String mathCode = parts[i]
-                .trim()
-                .replaceAll('–', '-')
-                .replaceAll('—', '-');
-            if (mathCode.isEmpty) continue;
-            spans.add(
-              WidgetSpan(
-                alignment: PlaceholderAlignment.middle,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(maxWidth: maxWidth),
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: Math.tex(
-                      mathCode,
-                      textStyle: style,
-                      mathStyle: MathStyle.text,
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }
-        }
-        return Text.rich(TextSpan(children: spans), style: style);
-      },
-    );
+    if (!text.contains(r'$')) return Text(text, style: style);
+    final parts = text.split(r'$');
+    final spans = <InlineSpan>[];
+    for (var index = 0; index < parts.length; index++) {
+      if (index.isEven) {
+        if (parts[index].isNotEmpty) spans.add(TextSpan(text: parts[index]));
+      } else if (parts[index].trim().isNotEmpty) {
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Math.tex(
+              parts[index].trim().replaceAll('–', '-').replaceAll('—', '-'),
+              textStyle: style,
+              mathStyle: MathStyle.text,
+            ),
+          ),
+        );
+      }
+    }
+    return Text.rich(TextSpan(children: spans), style: style);
   }
 }

@@ -1,6 +1,10 @@
+import 'dart:async';
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../../../services/ai_tutor_service.dart';
 
 class AIDailySuggestionCard extends StatefulWidget {
@@ -21,11 +25,23 @@ class AIDailySuggestionCard extends StatefulWidget {
 
 class _AIDailySuggestionCardState extends State<AIDailySuggestionCard> {
   final AITutorService _aiService = AITutorService();
-
   String _aiResponse = '';
   String _lastUpdatedTime = '';
   int _refreshCount = 0;
   bool _isLoading = true;
+  bool _isRefreshing = false;
+
+  String get _uid => FirebaseAuth.instance.currentUser?.uid ?? 'guest';
+  String _key(String suffix) => 'ai_suggest_${_uid}_$suffix';
+  String get _today {
+    final now = DateTime.now();
+    return '${now.year}-${now.month}-${now.day}';
+  }
+
+  bool get _hasProgress =>
+      widget.ngonNguProgress > 0 ||
+      widget.toanHocProgress > 0 ||
+      widget.logicProgress > 0;
 
   @override
   void initState() {
@@ -33,78 +49,89 @@ class _AIDailySuggestionCardState extends State<AIDailySuggestionCard> {
     _loadCacheOrFetchAI();
   }
 
-  // --- 1. KIỂM TRA CACHE TRƯỚC KHI GỌI AI ---
+  @override
+  void didUpdateWidget(covariant AIDailySuggestionCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldHadProgress =
+        oldWidget.ngonNguProgress > 0 ||
+        oldWidget.toanHocProgress > 0 ||
+        oldWidget.logicProgress > 0;
+    if (!oldHadProgress && _hasProgress) _loadCacheOrFetchAI();
+  }
+
   Future<void> _loadCacheOrFetchAI() async {
     final prefs = await SharedPreferences.getInstance();
-
-    // Lấy ngày hôm nay (VD: 2026-7-14)
-    DateTime now = DateTime.now();
-    String today = "${now.year}-${now.month}-${now.day}";
-
-    String cachedDate = prefs.getString('ai_suggest_date') ?? '';
-
-    // Nếu dữ liệu đã được cập nhật TRONG HÔM NAY -> Lấy từ Cache ra dùng luôn
-    if (cachedDate == today) {
+    final cachedText = prefs.getString(_key('text')) ?? '';
+    final cachedDate = prefs.getString(_key('date')) ?? '';
+    if (mounted && cachedText.isNotEmpty) {
       setState(() {
-        _aiResponse = prefs.getString('ai_suggest_text') ?? 'Không có dữ liệu.';
-        _lastUpdatedTime = prefs.getString('ai_suggest_time') ?? '';
-        _refreshCount = prefs.getInt('ai_suggest_count') ?? 0;
+        _aiResponse = cachedText;
+        _lastUpdatedTime = prefs.getString(_key('time')) ?? '';
+        _refreshCount = prefs.getInt(_key('count')) ?? 0;
         _isLoading = false;
       });
-    } else {
-      // Nếu là qua ngày mới -> Tự động gọi AI và reset lượt refresh về 0
-      await _fetchNewSuggestion(prefs, today, 0);
     }
+
+    if (!_hasProgress) {
+      if (mounted && cachedText.isEmpty) {
+        setState(() {
+          _aiResponse =
+              'Hãy hoàn thành một bài luyện tập để AI đưa ra gợi ý phù hợp với năng lực của bạn.';
+          _isLoading = false;
+        });
+      }
+      return;
+    }
+    if (cachedDate == _today && cachedText.isNotEmpty) return;
+    unawaited(_fetchNewSuggestion(prefs, 0, blockUi: cachedText.isEmpty));
   }
 
-  // --- 2. GỌI AI VÀ LƯU VÀO CACHE ---
   Future<void> _fetchNewSuggestion(
     SharedPreferences prefs,
-    String todayDate,
-    int newRefreshCount,
-  ) async {
-    setState(() => _isLoading = true);
-
-    // Chuẩn bị câu lệnh Prompt
-    String prompt =
-        '''
-Dựa vào tiến độ học tập: Ngôn ngữ ${(widget.ngonNguProgress * 100).toInt()}%, Toán học ${(widget.toanHocProgress * 100).toInt()}%, Logic ${(widget.logicProgress * 100).toInt()}%.
-Hãy cho tôi 1 lời khuyên ngắn gọn (khoảng 3-4 dòng) để cải thiện trong hôm nay.
-''';
-
+    int newRefreshCount, {
+    bool blockUi = false,
+  }) async {
+    if (mounted) {
+      setState(() {
+        _isLoading = blockUi && _aiResponse.isEmpty;
+        _isRefreshing = true;
+      });
+    }
     try {
-      String response = await _aiService.sendMessage(prompt, 'Gợi ý học tập');
-
-      // Lấy giờ phút hiện tại để in ra dòng chữ mờ
-      DateTime now = DateTime.now();
-      String timeStr =
-          "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')} ngày ${now.day}/${now.month}";
-
-      // Lưu toàn bộ vào SharedPreferences
-      await prefs.setString('ai_suggest_date', todayDate);
-      await prefs.setString('ai_suggest_text', response);
-      await prefs.setString('ai_suggest_time', timeStr);
-      await prefs.setInt('ai_suggest_count', newRefreshCount);
-
-      if (mounted) {
+      final response = await _aiService.getDailyRecommendation(
+        ngonNguRate: widget.ngonNguProgress,
+        toanHocRate: widget.toanHocProgress,
+        logicRate: widget.logicProgress,
+      );
+      final now = DateTime.now();
+      final time =
+          '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')} ngày ${now.day}/${now.month}';
+      await prefs.setString(_key('date'), _today);
+      await prefs.setString(_key('text'), response);
+      await prefs.setString(_key('time'), time);
+      await prefs.setInt(_key('count'), newRefreshCount);
+      if (!mounted) return;
+      setState(() {
+        _aiResponse = response;
+        _lastUpdatedTime = time;
+        _refreshCount = newRefreshCount;
+      });
+    } catch (_) {
+      if (mounted && _aiResponse.isEmpty) {
         setState(() {
-          _aiResponse = response;
-          _lastUpdatedTime = timeStr;
-          _refreshCount = newRefreshCount;
-          _isLoading = false;
+          _aiResponse =
+              'Hãy ưu tiên môn có tiến độ thấp nhất và hoàn thành một bài ngắn hôm nay.';
         });
       }
-    } catch (e) {
-      if (mounted) {
+    } finally {
+      if (mounted)
         setState(() {
-          _aiResponse = 'Có lỗi khi lấy gợi ý từ AI. Vui lòng thử lại sau.';
           _isLoading = false;
+          _isRefreshing = false;
         });
-      }
     }
   }
 
-  // --- 3. XỬ LÝ NÚT RESTART ---
   Future<void> _handleRefreshClick() async {
     if (_refreshCount >= 3) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -115,22 +142,16 @@ Hãy cho tôi 1 lời khuyên ngắn gọn (khoảng 3-4 dòng) để cải thi�
       );
       return;
     }
-
     final prefs = await SharedPreferences.getInstance();
-    DateTime now = DateTime.now();
-    String today = "${now.year}-${now.month}-${now.day}";
-
-    // Gọi hàm fetch và cộng thêm 1 lượt refresh
-    await _fetchNewSuggestion(prefs, today, _refreshCount + 1);
+    await _fetchNewSuggestion(prefs, _refreshCount + 1);
   }
 
-  // --- 4. GIAO DIỆN ---
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF8E1), // Vàng nhạt
+        color: const Color(0xFFFFF8E1),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: Colors.amber.shade200),
       ),
@@ -141,58 +162,63 @@ Hãy cho tôi 1 lời khuyên ngắn gọn (khoảng 3-4 dòng) để cải thi�
             children: [
               Icon(Icons.auto_awesome, color: Colors.amber.shade800),
               const SizedBox(width: 8),
-              Text(
-                'AI Gợi ý hôm nay',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.amber.shade900,
+              Expanded(
+                child: Text(
+                  'AI Gợi ý hôm nay',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.amber.shade900,
+                  ),
                 ),
               ),
+              if (_isRefreshing)
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
             ],
           ),
           const SizedBox(height: 16),
-
-          // NỘI DUNG AI
-          _isLoading
-              ? const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 20),
-                  child: Center(
-                    child: CircularProgressIndicator(color: Colors.amber),
-                  ),
-                )
-              : MarkdownBody(
-                  data: _aiResponse,
-                  styleSheet: MarkdownStyleSheet(
-                    p: const TextStyle(
-                      fontSize: 14,
-                      height: 1.5,
-                      color: Colors.black87,
-                    ),
-                  ),
+          if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Center(
+                child: CircularProgressIndicator(color: Colors.amber),
+              ),
+            )
+          else
+            MarkdownBody(
+              data: _aiResponse,
+              styleSheet: MarkdownStyleSheet(
+                p: const TextStyle(
+                  fontSize: 14,
+                  height: 1.5,
+                  color: Colors.black87,
                 ),
-
+              ),
+            ),
           const SizedBox(height: 16),
           const Divider(height: 1, color: Colors.black12),
           const SizedBox(height: 12),
-
-          // FOOTER: CHỮ MỜ & NÚT RESTART
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // Dòng chữ mờ nhỏ
-              Text(
-                'Cập nhật: $_lastUpdatedTime',
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: Colors.black38,
-                  fontStyle: FontStyle.italic,
+              Flexible(
+                child: Text(
+                  _lastUpdatedTime.isEmpty
+                      ? 'Đang dùng dữ liệu hiện có'
+                      : 'Cập nhật: $_lastUpdatedTime',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Colors.black38,
+                    fontStyle: FontStyle.italic,
+                  ),
                 ),
               ),
-
-              // Nút Restart có đếm số lượt
               InkWell(
-                onTap: _isLoading ? null : _handleRefreshClick,
+                onTap: _isRefreshing ? null : _handleRefreshClick,
                 borderRadius: BorderRadius.circular(8),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(

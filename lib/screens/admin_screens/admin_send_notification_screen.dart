@@ -20,6 +20,13 @@ class _AdminSendNotificationScreenState
   String _selectedTopic = 'admin_alerts'; // Mặc định là thông báo hệ thống
   bool _isLoading = false;
 
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _bodyController.dispose();
+    super.dispose();
+  }
+
   Future<void> _handleSendNotification() async {
     // Kiểm tra dữ liệu rỗng
     if (_titleController.text.trim().isEmpty ||
@@ -42,29 +49,28 @@ class _AdminSendNotificationScreenState
       topic: _selectedTopic,
     );
 
+    if (!mounted) return;
     setState(() => _isLoading = false);
 
     if (success) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Đã gửi thông báo thành công!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        // Xóa trắng form sau khi gửi
-        _titleController.clear();
-        _bodyController.clear();
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Đã tạo thông báo thành công!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      _titleController.clear();
+      _bodyController.clear();
     } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Lỗi khi gửi thông báo. Vui lòng thử lại!'),
-            backgroundColor: Colors.red,
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _notiService.lastError ??
+                'Lỗi khi gửi thông báo. Vui lòng thử lại!',
           ),
-        );
-      }
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -117,8 +123,9 @@ class _AdminSendNotificationScreenState
                         ),
                       ],
                       onChanged: (String? newValue) {
-                        if (newValue != null)
+                        if (newValue != null) {
                           setState(() => _selectedTopic = newValue);
+                        }
                       },
                     ),
                   ),

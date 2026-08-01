@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import '../practice_screens/practice_result_screen.dart';
@@ -93,12 +94,65 @@ class _RealExamScreenState extends State<RealExamScreen> {
       });
 
       _startTimer();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_precacheQuestionImages(0));
+      });
     } catch (e) {
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Lỗi tải đề thi: $e')));
     }
+  }
+
+  void _goToQuestion(int index) {
+    if (index < 0 || index >= _questions.length) return;
+    setState(() => _currentIndex = index);
+    unawaited(_precacheQuestionImages(index));
+  }
+
+  Future<String> _getImageUrl(String imageValue) {
+    return _imageFutures.putIfAbsent(
+      imageValue,
+      () => _resolveImageUrl(imageValue),
+    );
+  }
+
+  ImageProvider _optimizedImageProvider(String url) {
+    final networkImage = NetworkImage(url);
+    return kIsWeb
+        ? networkImage
+        : ResizeImage.resizeIfNeeded(1600, null, networkImage);
+  }
+
+  Future<void> _precacheQuestionImages(int startIndex) async {
+    if (!mounted || _questions.isEmpty) return;
+
+    final lastIndex = startIndex + 1 < _questions.length
+        ? startIndex + 1
+        : startIndex;
+    final values = <String>{};
+
+    for (int index = startIndex; index <= lastIndex; index++) {
+      final data = _questions[index].data() as Map<String, dynamic>? ?? {};
+      for (final field in const ['anhChung', 'anhCauHoi']) {
+        final value = data[field]?.toString().trim() ?? '';
+        if (value.isNotEmpty) values.add(value);
+      }
+    }
+
+    await Future.wait(
+      values.map((value) async {
+        try {
+          final url = await _getImageUrl(value);
+          if (mounted) {
+            await precacheImage(_optimizedImageProvider(url), context);
+          }
+        } catch (e) {
+          debugPrint('Không thể tải trước ảnh $value: $e');
+        }
+      }),
+    );
   }
 
   void _startTimer() {
@@ -345,7 +399,7 @@ class _RealExamScreenState extends State<RealExamScreen> {
 
                   return GestureDetector(
                     onTap: () {
-                      setState(() => _currentIndex = index);
+                      _goToQuestion(index);
                       Navigator.pop(context); // Đóng popup và chuyển đến câu đó
                     },
                     child: Container(
@@ -658,7 +712,7 @@ class _RealExamScreenState extends State<RealExamScreen> {
               children: [
                 OutlinedButton.icon(
                   onPressed: _currentIndex > 0
-                      ? () => setState(() => _currentIndex--)
+                      ? () => _goToQuestion(_currentIndex - 1)
                       : null,
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(
@@ -682,7 +736,7 @@ class _RealExamScreenState extends State<RealExamScreen> {
                 ),
                 ElevatedButton(
                   onPressed: _currentIndex < _questions.length - 1
-                      ? () => setState(() => _currentIndex++)
+                      ? () => _goToQuestion(_currentIndex + 1)
                       : null,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _surfaceLow,
@@ -789,10 +843,8 @@ class _RealExamScreenState extends State<RealExamScreen> {
   }
 
   Widget _buildImage(String imageValue) {
-    _imageFutures.putIfAbsent(imageValue, () => _resolveImageUrl(imageValue));
-
     return FutureBuilder<String>(
-      future: _imageFutures[imageValue],
+      future: _getImageUrl(imageValue),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Padding(
@@ -821,10 +873,24 @@ class _RealExamScreenState extends State<RealExamScreen> {
           padding: const EdgeInsets.only(bottom: 8),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: Image.network(
-              snapshot.data!,
+            child: Image(
+              image: _optimizedImageProvider(snapshot.data!),
               width: double.infinity,
               fit: BoxFit.contain,
+              filterQuality: FilterQuality.medium,
+              gaplessPlayback: true,
+              loadingBuilder: (context, child, progress) {
+                if (progress == null) return child;
+                final expected = progress.expectedTotalBytes;
+                final value = expected == null
+                    ? null
+                    : progress.cumulativeBytesLoaded / expected;
+                return Container(
+                  constraints: const BoxConstraints(minHeight: 140),
+                  alignment: Alignment.center,
+                  child: CircularProgressIndicator(value: value),
+                );
+              },
               errorBuilder: (context, error, stackTrace) => Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),

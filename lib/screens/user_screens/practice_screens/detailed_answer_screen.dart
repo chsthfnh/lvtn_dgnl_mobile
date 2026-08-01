@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -17,6 +18,7 @@ class DetailedAnswerScreen extends StatelessWidget {
   final Color _primary = const Color(0xFF002045);
   final Color _correctGreen = const Color(0xFF006E2F);
   final Color _errorRed = const Color(0xFFBA1A1A);
+  static final Map<String, Future<String>> _imageFutures = {};
 
   @override
   Widget build(BuildContext context) {
@@ -270,22 +272,84 @@ class DetailedAnswerScreen extends StatelessWidget {
     );
   }
 
+  Future<String> _resolveImageUrl(String imageValue) {
+    final value = imageValue.trim();
+
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return Future<String>.value(value);
+    }
+
+    if (value.startsWith('gs://')) {
+      return FirebaseStorage.instance.refFromURL(value).getDownloadURL();
+    }
+
+    final storagePath = value.startsWith('QuestionImages/')
+        ? value
+        : 'QuestionImages/$value';
+    return FirebaseStorage.instance.ref(storagePath).getDownloadURL();
+  }
+
+  Future<String> _getImageUrl(String imageValue) {
+    return _imageFutures.putIfAbsent(
+      imageValue,
+      () => _resolveImageUrl(imageValue),
+    );
+  }
+
+  ImageProvider _optimizedImageProvider(String url) {
+    final networkImage = NetworkImage(url);
+    return kIsWeb
+        ? networkImage
+        : ResizeImage.resizeIfNeeded(1600, null, networkImage);
+  }
+
   Widget _buildImage(String imageName) {
     return FutureBuilder<String>(
-      future: FirebaseStorage.instance
-          .ref('QuestionImages/$imageName')
-          .getDownloadURL(),
+      future: _getImageUrl(imageName),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting)
+        if (snapshot.connectionState == ConnectionState.waiting) {
           return const Padding(
             padding: EdgeInsets.all(8.0),
-            child: CircularProgressIndicator(),
+            child: Center(child: CircularProgressIndicator()),
           );
-        if (snapshot.hasData)
+        }
+
+        if (snapshot.hasData) {
           return ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: Image.network(snapshot.data!, fit: BoxFit.contain),
+            child: Image(
+              image: _optimizedImageProvider(snapshot.data!),
+              width: double.infinity,
+              fit: BoxFit.contain,
+              filterQuality: FilterQuality.medium,
+              gaplessPlayback: true,
+              loadingBuilder: (context, child, progress) {
+                if (progress == null) return child;
+                final expected = progress.expectedTotalBytes;
+                final value = expected == null
+                    ? null
+                    : progress.cumulativeBytesLoaded / expected;
+                return Container(
+                  constraints: const BoxConstraints(minHeight: 140),
+                  alignment: Alignment.center,
+                  child: CircularProgressIndicator(value: value),
+                );
+              },
+              errorBuilder: (context, error, stackTrace) => Text(
+                '[Không tải được ảnh: $imageName]',
+                style: const TextStyle(color: Colors.red),
+              ),
+            ),
           );
+        }
+
+        if (snapshot.hasError) {
+          return Text(
+            '[Lỗi lấy URL ảnh: $imageName]',
+            style: const TextStyle(color: Colors.red),
+          );
+        }
+
         return const SizedBox.shrink();
       },
     );

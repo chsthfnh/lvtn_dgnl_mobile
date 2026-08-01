@@ -46,9 +46,6 @@ flutter {
 }
 
 dependencies {
-    implementation("androidx.credentials:credentials:1.2.2")
-    implementation("androidx.credentials:credentials-play-services-auth:1.2.2")
-
     // Optional ML Kit script packages referenced by the Flutter plugin.
     // Including them prevents R8 missing-class errors in release builds.
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")

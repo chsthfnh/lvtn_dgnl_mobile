@@ -24,6 +24,17 @@ class _ImportImagesScreenState extends State<ImportImagesScreen> {
   // Danh sách kết quả để hiển thị trên UI
   final List<Map<String, dynamic>> _uploadResults = [];
 
+  SettableMetadata _metadataForImage(String fileName) {
+    final extension = fileName.split('.').last.toLowerCase();
+    final contentType = extension == 'png' ? 'image/png' : 'image/jpeg';
+
+    return SettableMetadata(
+      contentType: contentType,
+      // Cho phép mobile và trình duyệt dùng lại ảnh trong 7 ngày.
+      cacheControl: 'public,max-age=604800',
+    );
+  }
+
   // --- HÀM 1: CHỌN NHIỀU ẢNH TỪ MÁY ---
   Future<void> _pickImages() async {
     try {
@@ -113,13 +124,14 @@ class _ImportImagesScreenState extends State<ImportImagesScreen> {
         });
 
         // --- SỬA ĐOẠN NÀY ĐỂ HỖ TRỢ WEB ---
+        final metadata = _metadataForImage(fileName);
         if (kIsWeb) {
           // Xử lý kiểu Web (Dùng mảng byte)
-          await ref.putData(file.bytes!);
+          await ref.putData(file.bytes!, metadata);
         } else {
           // Xử lý kiểu App (Dùng đường dẫn file)
           File imageFile = File(file.path!);
-          await ref.putFile(imageFile);
+          await ref.putFile(imageFile, metadata);
         }
         // -----------------------------------
 

@@ -23,6 +23,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
   final Color _errorBg = const Color(0xFFFFDAD6);
 
   bool _isLoading = true;
+  String? _loadError;
   StreamSubscription<DocumentSnapshot>? _userSub;
   StreamSubscription<QuerySnapshot>? _historySub;
   StreamSubscription<DocumentSnapshot>?
@@ -73,6 +74,15 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
   void _listenToStatistics() {
     String? uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
+    _userSub?.cancel();
+    _progressSub?.cancel();
+    _historySub?.cancel();
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _loadError = null;
+      });
+    }
 
     // 1. Lắng nghe mục tiêu điểm
     _userSub = FirebaseFirestore.instance
@@ -104,184 +114,199 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
         .collection('ExamHistory')
         .where('userId', isEqualTo: uid)
         .orderBy('submittedAt', descending: true)
+        .limit(200)
         .snapshots()
-        .listen((historySnap) {
-          int totalC = 0, totalQ = 0, totalTime = 0;
-          int nnC = 0,
-              nnQ = 0,
-              thC = 0,
-              thQ = 0,
-              tdC = 0,
-              tdQ = 0,
-              genC = 0,
-              genQ = 0;
+        .listen(
+          (historySnap) {
+            int totalC = 0, totalQ = 0, totalTime = 0;
+            int nnC = 0,
+                nnQ = 0,
+                thC = 0,
+                thQ = 0,
+                tdC = 0,
+                tdQ = 0,
+                genC = 0,
+                genQ = 0;
 
-          List<int> tempPracticeQ = [0, 0, 0, 0, 0, 0, 0];
-          List<int> tempExamQ = [0, 0, 0, 0, 0, 0, 0];
-          List<int> tempPracticeTime = [0, 0, 0, 0, 0, 0, 0];
-          List<int> tempExamTime = [0, 0, 0, 0, 0, 0, 0];
-          Map<String, int> tempDailyActivityMap = {};
-          List<Map<String, dynamic>> tempActivities = [];
+            List<int> tempPracticeQ = [0, 0, 0, 0, 0, 0, 0];
+            List<int> tempExamQ = [0, 0, 0, 0, 0, 0, 0];
+            List<int> tempPracticeTime = [0, 0, 0, 0, 0, 0, 0];
+            List<int> tempExamTime = [0, 0, 0, 0, 0, 0, 0];
+            Map<String, int> tempDailyActivityMap = {};
+            List<Map<String, dynamic>> tempActivities = [];
 
-          if (historySnap.docs.isNotEmpty) {
-            for (var doc in historySnap.docs) {
-              var data = doc.data();
-              int totalQInExam = data['totalQuestions'] ?? 0;
-              int q = data['answeredCount'] ?? totalQInExam;
-              int c = data['correctAnswers'] ?? 0;
-              int secs = data['timeSpentSeconds'] ?? 0;
-              String name = (data['examName'] ?? '').toString().toLowerCase();
+            if (historySnap.docs.isNotEmpty) {
+              for (var doc in historySnap.docs) {
+                var data = doc.data();
+                int totalQInExam = data['totalQuestions'] ?? 0;
+                int q = data['answeredCount'] ?? totalQInExam;
+                int c = data['correctAnswers'] ?? 0;
+                int secs = data['timeSpentSeconds'] ?? 0;
+                String name = (data['examName'] ?? '').toString().toLowerCase();
 
-              bool isLevelMode = data['examId'] == 'level_mode';
-              bool isPractice =
-                  isLevelMode ||
-                  data['examId'] == 'practice_mode' ||
-                  name.contains('luyện tập');
-              int stars = data['stars'] ?? 0;
-              int level = data['level'] ?? 1;
+                bool isLevelMode = data['examId'] == 'level_mode';
+                bool isPractice =
+                    isLevelMode ||
+                    data['examId'] == 'practice_mode' ||
+                    name.contains('luyện tập');
+                int stars = data['stars'] ?? 0;
+                int level = data['level'] ?? 1;
 
-              totalQ += q;
-              totalC += c;
-              totalTime += secs;
+                totalQ += q;
+                totalC += c;
+                totalTime += secs;
 
-              if (data['submittedAt'] != null) {
-                DateTime dt = data['submittedAt'].toDate();
-                int weekdayIdx = dt.weekday - 1;
-
-                if (weekdayIdx >= 0 && weekdayIdx < 7) {
-                  if (isPractice) {
-                    tempPracticeQ[weekdayIdx] += q;
-                    tempPracticeTime[weekdayIdx] += secs;
-                  } else {
-                    tempExamQ[weekdayIdx] += q;
-                    tempExamTime[weekdayIdx] += secs;
-                  }
-                }
-
-                String dateKey = "${dt.year}-${dt.month}-${dt.day}";
-                tempDailyActivityMap[dateKey] =
-                    (tempDailyActivityMap[dateKey] ?? 0) + q;
-              }
-
-              // Lọc môn học
-              if (name.contains('ngôn ngữ') ||
-                  name.contains('tiếng') ||
-                  name.contains('văn')) {
-                nnC += c;
-                nnQ += q;
-              } else if (name.contains('toán') || name.contains('số liệu')) {
-                thC += c;
-                thQ += q;
-              } else if (name.contains('tư duy') ||
-                  name.contains('khoa học') ||
-                  name.contains('logic') ||
-                  name.contains('lô gic')) {
-                tdC += c;
-                tdQ += q;
-              } else {
-                genC += c;
-                genQ += q;
-              }
-
-              // Xử lý lưu danh sách hoạt động gần đây
-              if (tempActivities.length < 20) {
-                double currentAcc = totalQInExam > 0 ? (c / totalQInExam) : 0.0;
-                int estimatedScore = (currentAcc * 1200).toInt();
-
-                String dateLabel = 'Vừa xong';
                 if (data['submittedAt'] != null) {
                   DateTime dt = data['submittedAt'].toDate();
-                  dateLabel =
-                      "${dt.day}/${dt.month} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
+                  int weekdayIdx = dt.weekday - 1;
+
+                  if (weekdayIdx >= 0 && weekdayIdx < 7) {
+                    if (isPractice) {
+                      tempPracticeQ[weekdayIdx] += q;
+                      tempPracticeTime[weekdayIdx] += secs;
+                    } else {
+                      tempExamQ[weekdayIdx] += q;
+                      tempExamTime[weekdayIdx] += secs;
+                    }
+                  }
+
+                  String dateKey = "${dt.year}-${dt.month}-${dt.day}";
+                  tempDailyActivityMap[dateKey] =
+                      (tempDailyActivityMap[dateKey] ?? 0) + q;
                 }
 
-                String scoreText;
-                String status;
-                Color statusColor;
-
-                if (isPractice) {
-                  int totalPracticeQ = data['answeredCount'] ?? totalQInExam;
-                  scoreText = '${c * 10}/${totalPracticeQ * 10}';
-                  double practiceAcc = totalPracticeQ > 0
-                      ? (c / totalPracticeQ)
-                      : 0.0;
-
-                  if (practiceAcc >= 0.8) {
-                    status = 'Rất tốt';
-                    statusColor = _success;
-                  } else if (practiceAcc >= 0.5) {
-                    status = 'Ổn định';
-                    statusColor = Colors.blue;
-                  } else {
-                    status = 'Cần cố gắng';
-                    statusColor = _error;
-                  }
+                // Lọc môn học
+                if (name.contains('ngôn ngữ') ||
+                    name.contains('tiếng') ||
+                    name.contains('văn')) {
+                  nnC += c;
+                  nnQ += q;
+                } else if (name.contains('toán') || name.contains('số liệu')) {
+                  thC += c;
+                  thQ += q;
+                } else if (name.contains('tư duy') ||
+                    name.contains('khoa học') ||
+                    name.contains('logic') ||
+                    name.contains('lô gic')) {
+                  tdC += c;
+                  tdQ += q;
                 } else {
-                  scoreText = '$estimatedScore/1200';
-                  if (estimatedScore >= _targetScore) {
-                    status = 'Vượt kỳ vọng';
-                    statusColor = _success;
-                  } else if (estimatedScore >= _targetScore * 0.75) {
-                    status = 'Khá tốt';
-                    statusColor = Colors.blue;
-                  } else if (estimatedScore >= _targetScore * 0.5) {
-                    status = 'Ổn định';
-                    statusColor = Colors.blueGrey;
-                  } else {
-                    status = 'Cần cố gắng';
-                    statusColor = _error;
-                  }
+                  genC += c;
+                  genQ += q;
                 }
 
-                tempActivities.add({
-                  'title': data['examName'] ?? 'Đề thi thử ĐGNL',
-                  'subtitle': 'Hoàn thành: $dateLabel',
-                  'scoreText': scoreText,
-                  'status': status,
-                  'color': statusColor,
-                  'isLevelMode': isLevelMode, // Biến cờ Gamification
-                  'stars': stars,
-                  'level': level,
-                });
+                // Xử lý lưu danh sách hoạt động gần đây
+                if (tempActivities.length < 20) {
+                  double currentAcc = totalQInExam > 0
+                      ? (c / totalQInExam)
+                      : 0.0;
+                  int estimatedScore = (currentAcc * 1200).toInt();
+
+                  String dateLabel = 'Vừa xong';
+                  if (data['submittedAt'] != null) {
+                    DateTime dt = data['submittedAt'].toDate();
+                    dateLabel =
+                        "${dt.day}/${dt.month} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
+                  }
+
+                  String scoreText;
+                  String status;
+                  Color statusColor;
+
+                  if (isPractice) {
+                    int totalPracticeQ = data['answeredCount'] ?? totalQInExam;
+                    scoreText = '${c * 10}/${totalPracticeQ * 10}';
+                    double practiceAcc = totalPracticeQ > 0
+                        ? (c / totalPracticeQ)
+                        : 0.0;
+
+                    if (practiceAcc >= 0.8) {
+                      status = 'Rất tốt';
+                      statusColor = _success;
+                    } else if (practiceAcc >= 0.5) {
+                      status = 'Ổn định';
+                      statusColor = Colors.blue;
+                    } else {
+                      status = 'Cần cố gắng';
+                      statusColor = _error;
+                    }
+                  } else {
+                    scoreText = '$estimatedScore/1200';
+                    if (estimatedScore >= _targetScore) {
+                      status = 'Vượt kỳ vọng';
+                      statusColor = _success;
+                    } else if (estimatedScore >= _targetScore * 0.75) {
+                      status = 'Khá tốt';
+                      statusColor = Colors.blue;
+                    } else if (estimatedScore >= _targetScore * 0.5) {
+                      status = 'Ổn định';
+                      statusColor = Colors.blueGrey;
+                    } else {
+                      status = 'Cần cố gắng';
+                      statusColor = _error;
+                    }
+                  }
+
+                  tempActivities.add({
+                    'title': data['examName'] ?? 'Đề thi thử ĐGNL',
+                    'subtitle': 'Hoàn thành: $dateLabel',
+                    'scoreText': scoreText,
+                    'status': status,
+                    'color': statusColor,
+                    'isLevelMode': isLevelMode, // Biến cờ Gamification
+                    'stars': stars,
+                    'level': level,
+                  });
+                }
               }
             }
-          }
 
-          if (mounted) {
-            setState(() {
-              _totalQuestions = totalQ;
-              _totalTimeMinutes = totalTime ~/ 60;
-              _accuracy = totalQ > 0 ? (totalC / totalQ) : 0.0;
-              _currentPredictedScore = (_accuracy * 1200).toInt();
+            if (mounted) {
+              setState(() {
+                _totalQuestions = totalQ;
+                _totalTimeMinutes = totalTime ~/ 60;
+                _accuracy = totalQ > 0 ? (totalC / totalQ) : 0.0;
+                _currentPredictedScore = (_accuracy * 1200).toInt();
 
-              _allRecentActivities = tempActivities;
-              _recentActivities = tempActivities.take(3).toList();
+                _allRecentActivities = tempActivities;
+                _recentActivities = tempActivities.take(3).toList();
 
-              _practiceQByWeekday = tempPracticeQ;
-              _examQByWeekday = tempExamQ;
-              _practiceTimeByWeekday = tempPracticeTime
-                  .map((s) => s > 0 ? max(1, s ~/ 60) : 0)
-                  .toList();
-              _examTimeByWeekday = tempExamTime
-                  .map((s) => s > 0 ? max(1, s ~/ 60) : 0)
-                  .toList();
-              _dailyActivityMap = tempDailyActivityMap;
+                _practiceQByWeekday = tempPracticeQ;
+                _examQByWeekday = tempExamQ;
+                _practiceTimeByWeekday = tempPracticeTime
+                    .map((s) => s > 0 ? max(1, s ~/ 60) : 0)
+                    .toList();
+                _examTimeByWeekday = tempExamTime
+                    .map((s) => s > 0 ? max(1, s ~/ 60) : 0)
+                    .toList();
+                _dailyActivityMap = tempDailyActivityMap;
 
-              double calc(int specC, int specQ) {
-                int sumC = specC + genC;
-                int sumQ = specQ + genQ;
-                return sumQ > 0 ? sumC / sumQ : 0.0;
-              }
+                double calc(int specC, int specQ) {
+                  int sumC = specC + genC;
+                  int sumQ = specQ + genQ;
+                  return sumQ > 0 ? sumC / sumQ : 0.0;
+                }
 
-              _sectionSkills = {
-                'Ngôn ngữ': calc(nnC, nnQ),
-                'Toán học': calc(thC, thQ),
-                'Tư duy Logic': calc(tdC, tdQ),
-              };
-              _isLoading = false;
-            });
-          }
-        });
+                _sectionSkills = {
+                  'Ngôn ngữ': calc(nnC, nnQ),
+                  'Toán học': calc(thC, thQ),
+                  'Tư duy Logic': calc(tdC, tdQ),
+                };
+                _isLoading = false;
+              });
+            }
+          },
+          onError: (error) {
+            debugPrint('Lỗi tải thống kê: $error');
+            if (mounted) {
+              setState(() {
+                _loadError =
+                    'Không thể tải thống kê. Kiểm tra mạng rồi thử lại.';
+                _isLoading = false;
+              });
+            }
+          },
+        );
   }
 
   void _editTargetScore() {
@@ -598,6 +623,26 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
       backgroundColor: _bgLight,
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
+          : _loadError != null
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.cloud_off, size: 48, color: Colors.grey),
+                    const SizedBox(height: 12),
+                    Text(_loadError!, textAlign: TextAlign.center),
+                    const SizedBox(height: 12),
+                    ElevatedButton.icon(
+                      onPressed: _listenToStatistics,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Thử lại'),
+                    ),
+                  ],
+                ),
+              ),
+            )
           : SafeArea(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(20),

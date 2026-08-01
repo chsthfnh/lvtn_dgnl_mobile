@@ -18,15 +18,23 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  // Web OAuth client (client_type: 3) lấy từ google-services.json.
+  // Android dùng giá trị này làm serverClientId để nhận ID token cho Firebase.
+  static const String _googleServerClientId =
+      '39592049411-fn79he9ichcms0qsfqrl6q1p2aij84tv.apps.googleusercontent.com';
+
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  late final GoogleSignIn _mobileGoogleSignIn = GoogleSignIn(
+    scopes: const <String>['email'],
+    serverClientId: _googleServerClientId,
+  );
 
   bool _obscurePassword = true;
   bool _isLoading = false;
   bool _isGooglePopupOpen = false;
   int _googleSignInAttempt = 0;
-  Future<void>? _googleSignInInitialization;
 
   // --- HÀM 1: LƯU SESSION ID VÀ LỊCH SỬ THIẾT BỊ ---
   Future<void> _saveSessionAndHistory(String uid) async {
@@ -285,26 +293,53 @@ class _LoginScreenState extends State<LoginScreen> {
           (route) => false,
         );
       } else {
-        // --- MOBILE (ANDROID/IOS) - google_sign_in v7.x ---
+        // --- MOBILE (ANDROID/IOS) - google_sign_in v6.3.0 ---
         if (mounted) {
           setState(() => _isLoading = true);
         }
 
-        final GoogleSignIn googleSignIn = GoogleSignIn.instance;
+        debugPrint('[GoogleLogin] 1. Đang mở màn hình chọn tài khoản...');
 
-        // google_sign_in v7 yêu cầu initialize() đúng một lần.
-        await (_googleSignInInitialization ??= googleSignIn.initialize());
+        // Xóa phiên Google được lưu trên thiết bị để luôn hiện chọn tài khoản.
+        try {
+          await _mobileGoogleSignIn.signOut();
+        } catch (e) {
+          debugPrint('[GoogleLogin] Không thể xóa phiên Google cũ: $e');
+        }
 
-        // Hiện giao diện chọn tài khoản Google trên thiết bị.
-        final GoogleSignInAccount googleUser = await googleSignIn
-            .authenticate();
+        final GoogleSignInAccount? googleUser = await _mobileGoogleSignIn
+            .signIn();
 
-        final GoogleSignInAuthentication googleAuth = googleUser.authentication;
+        // API v6 trả về null khi người dùng thực sự đóng hộp thoại.
+        if (googleUser == null) {
+          debugPrint('[GoogleLogin] Người dùng đã đóng cửa sổ Google.');
+          return;
+        }
 
-        // Firebase chỉ cần ID token để xác thực Google trên mobile.
-        final AuthCredential credential = GoogleAuthProvider.credential(
-          idToken: googleAuth.idToken,
+        debugPrint(
+          '[GoogleLogin] 2. Đã nhận tài khoản Google: ${googleUser.email}',
         );
+
+        final GoogleSignInAuthentication googleAuth =
+            await googleUser.authentication;
+
+        final String? idToken = googleAuth.idToken;
+        if (idToken == null || idToken.isEmpty) {
+          await _mobileGoogleSignIn.signOut();
+          throw FirebaseAuthException(
+            code: 'missing-google-id-token',
+            message:
+                'Google không trả về ID token. Hãy kiểm tra SHA-1 và google-services.json.',
+          );
+        }
+
+        // Dùng cả accessToken và idToken theo API google_sign_in v6.
+        final AuthCredential credential = GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: idToken,
+        );
+
+        debugPrint('[GoogleLogin] 3. Đang xác thực với Firebase...');
 
         final UserCredential userCredential = await _auth.signInWithCredential(
           credential,
@@ -312,10 +347,19 @@ class _LoginScreenState extends State<LoginScreen> {
         final User? user = userCredential.user;
 
         if (user == null) {
-          await googleSignIn.signOut();
+          await _mobileGoogleSignIn.signOut();
           await _auth.signOut();
           return;
         }
+
+        debugPrint(
+          '[GoogleLogin] 4. Firebase đăng nhập thành công: ${user.uid}',
+        );
+
+        // Xóa session cũ trước khi ghi session mới để AuthWrapper không
+        // nhầm phiên trước đó là phiên đang đăng nhập.
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('current_session_id');
 
         // Kiểm tra hồ sơ sau khi Firebase đã xác thực, sử dụng đúng UID.
         final userDoc = await FirebaseFirestore.instance
@@ -330,14 +374,18 @@ class _LoginScreenState extends State<LoginScreen> {
             // Nếu không xóa được Auth thì vẫn phải đăng xuất.
           }
 
-          await googleSignIn.signOut();
+          await _mobileGoogleSignIn.signOut();
           await _auth.signOut();
           _showUnregisteredError();
           return;
         }
 
+        debugPrint('[GoogleLogin] 5. Đã tìm thấy hồ sơ Users/${user.uid}');
+
         // Ghi sessionId mới lên Firestore để đá phiên đang mở ở thiết bị khác.
         await _saveSessionAndHistory(user.uid);
+
+        debugPrint('[GoogleLogin] 6. Đã lưu session đăng nhập mới');
 
         if (!mounted) return;
 
@@ -355,6 +403,10 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       }
     } on FirebaseAuthException catch (e) {
+      debugPrint(
+        '[GoogleLogin] FirebaseAuthException code=${e.code}, message=${e.message}',
+      );
+
       // Đóng popup là thao tác hủy bình thường, không hiển thị lỗi.
       const cancelledCodes = {
         'popup-closed-by-user',
@@ -376,8 +428,28 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } catch (e) {
       final error = e.toString().toLowerCase();
+      debugPrint('[GoogleLogin] Google Sign-In exception: $e');
 
-      if (!error.contains('canceled') &&
+      final bool isAccountReauthConfigurationError =
+          error.contains('account reauth failed') || error.contains('[16]');
+
+      if (isAccountReauthConfigurationError) {
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Không thể xác thực Google trên Android. '
+                  'Hãy kiểm tra SHA-1, SHA-256, package name và '
+                  'google-services.json của ứng dụng.',
+                ),
+                backgroundColor: Colors.red,
+                duration: Duration(seconds: 7),
+              ),
+            );
+        }
+      } else if (!error.contains('canceled') &&
           !error.contains('cancelled') &&
           !error.contains('cancel') &&
           !error.contains('popup-closed-by-user')) {
@@ -385,6 +457,19 @@ class _LoginScreenState extends State<LoginScreen> {
           ScaffoldMessenger.of(
             context,
           ).showSnackBar(SnackBar(content: Text('Lỗi đăng nhập: $e')));
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Đã đóng đăng nhập Google. Bạn có thể nhấn lại để thử tiếp.',
+                ),
+                duration: Duration(seconds: 3),
+              ),
+            );
         }
       }
     } finally {

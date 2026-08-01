@@ -16,14 +16,29 @@ class _ExamDetailScreenState extends State<ExamDetailScreen> {
   // Khởi tạo Hive Service
   final HiveService _hiveService = HiveService();
   bool _isDownloading = false;
+  bool _isDownloaded = false;
 
   // --- BẢNG MÀU DESIGN SYSTEM ---
   final Color _primary = const Color(0xFF002045);
   final Color _bgLight = const Color(0xFFF8F9FF);
   final Color _outline = const Color(0xFFC4C6CF);
 
+  @override
+  void initState() {
+    super.initState();
+    _checkOfflineState();
+  }
+
+  Future<void> _checkOfflineState() async {
+    await _hiveService.initialize();
+    if (!mounted) return;
+    setState(() {
+      _isDownloaded = _hiveService.isExamDownloaded(widget.examDoc.id);
+    });
+  }
+
   // Hàm xử lý tải đề
-  void _handleDownload() async {
+  Future<void> _handleDownload() async {
     setState(() => _isDownloading = true);
 
     Map<String, dynamic> examData =
@@ -35,13 +50,16 @@ class _ExamDetailScreenState extends State<ExamDetailScreen> {
     );
 
     if (mounted) {
-      setState(() => _isDownloading = false);
+      setState(() {
+        _isDownloading = false;
+        if (success) _isDownloaded = true;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             success
                 ? 'Đã tải đề thi thành công! Bạn có thể làm khi không có mạng.'
-                : 'Lỗi khi tải đề thi.',
+                : (_hiveService.lastError ?? 'Lỗi khi tải đề thi.'),
           ),
           backgroundColor: success ? Colors.green : Colors.red,
         ),
@@ -77,9 +95,6 @@ class _ExamDetailScreenState extends State<ExamDetailScreen> {
             'chiTiet': 'Logic (12 Câu) & Suy Luận (18 Câu)',
           },
         ];
-
-    // Kiểm tra xem đề này đã tải chưa
-    bool isDownloaded = _hiveService.isExamDownloaded(widget.examDoc.id);
 
     return Scaffold(
       backgroundColor: _bgLight,
@@ -219,7 +234,7 @@ class _ExamDetailScreenState extends State<ExamDetailScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
-                      onPressed: (isDownloaded || _isDownloading)
+                      onPressed: (_isDownloaded || _isDownloading)
                           ? null
                           : _handleDownload,
                       icon: _isDownloading
@@ -229,20 +244,22 @@ class _ExamDetailScreenState extends State<ExamDetailScreen> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : Icon(
-                              isDownloaded
+                              _isDownloaded
                                   ? Icons.cloud_done
                                   : Icons.cloud_download,
                             ),
                       label: Text(
-                        isDownloaded
+                        _isDownloaded
                             ? 'Đã lưu trên máy (Offline)'
                             : 'Tải về máy (Học Offline)',
                       ),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 14),
-                        foregroundColor: isDownloaded ? Colors.green : _primary,
+                        foregroundColor: _isDownloaded
+                            ? Colors.green
+                            : _primary,
                         side: BorderSide(
-                          color: isDownloaded ? Colors.green : _primary,
+                          color: _isDownloaded ? Colors.green : _primary,
                         ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),

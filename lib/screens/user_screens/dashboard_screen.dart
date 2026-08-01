@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'practice_screens/practice_setup_screen.dart';
 import 'mock_exam_screens/mock_exam_screen.dart';
 import 'profile_screens/profile_screen.dart';
@@ -32,12 +33,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // ĐÃ THÊM: Biến này dùng để quản lý luồng lắng nghe dữ liệu
   StreamSubscription<QuerySnapshot>? _historySub;
+  StreamSubscription<QuerySnapshot>? _notificationSub;
 
   @override
   void initState() {
     super.initState();
     _fetchUserData();
     _listenToRealProgress(); // ĐÃ SỬA: Gọi hàm lắng nghe Real-time
+    _listenForForegroundNotifications();
     updatePresence('idle');
   }
 
@@ -45,7 +48,70 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void dispose() {
     // ĐÃ THÊM: Hủy lắng nghe khi đóng màn hình để giải phóng RAM
     _historySub?.cancel();
+    _notificationSub?.cancel();
     super.dispose();
+  }
+
+  void _listenForForegroundNotifications() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    _notificationSub = FirebaseFirestore.instance
+        .collection('Notifications')
+        .orderBy('createdAt', descending: true)
+        .limit(1)
+        .snapshots()
+        .listen(
+          (snapshot) async {
+            if (!mounted || snapshot.docs.isEmpty) return;
+            final doc = snapshot.docs.first;
+            final data = doc.data() as Map<String, dynamic>;
+            final deletedBy = List<String>.from(data['deletedBy'] ?? const []);
+            if (deletedBy.contains(uid)) return;
+
+            final prefs = await SharedPreferences.getInstance();
+            final cacheKey = 'last_popup_notification_$uid';
+            if (prefs.getString(cacheKey) == doc.id) return;
+
+            final createdAt = data['createdAt'];
+            if (createdAt is Timestamp &&
+                DateTime.now().difference(createdAt.toDate()).inMinutes > 10) {
+              await prefs.setString(cacheKey, doc.id);
+              return;
+            }
+
+            await prefs.setString(cacheKey, doc.id);
+            if (!mounted) return;
+            final title = (data['title'] ?? 'Thông báo mới').toString();
+            final content = (data['content'] ?? data['body'] ?? '').toString();
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(
+                SnackBar(
+                  behavior: SnackBarBehavior.floating,
+                  duration: const Duration(seconds: 8),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      if (content.isNotEmpty) Text(content, maxLines: 2),
+                    ],
+                  ),
+                  action: SnackBarAction(
+                    label: 'Xem',
+                    onPressed: _showNotificationPopup,
+                  ),
+                ),
+              );
+          },
+          onError: (error) {
+            debugPrint('Lỗi lắng nghe thông báo: $error');
+          },
+        );
   }
 
   void _showNotificationPopup() {
@@ -82,6 +148,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 stream: FirebaseFirestore.instance
                     .collection('Notifications')
                     .orderBy('createdAt', descending: true)
+                    .limit(200)
                     .snapshots(),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting)
@@ -257,6 +324,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _historySub = FirebaseFirestore.instance
         .collection('ExamHistory')
         .where('userId', isEqualTo: user.uid)
+        .limit(200)
         .snapshots()
         .listen(
           (history) {
@@ -368,6 +436,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 StreamBuilder<QuerySnapshot>(
                   stream: FirebaseFirestore.instance
                       .collection('Notifications')
+                      .limit(200)
                       .snapshots(),
                   builder: (context, snapshot) {
                     bool hasUnread = false;
