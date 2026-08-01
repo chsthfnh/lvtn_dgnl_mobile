@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
@@ -35,9 +36,71 @@ class _AIOcrScannerSheetState extends State<AIOcrScannerSheet> {
   bool _isProcessingImage = false;
   bool _isNormalizingLatex = false;
   bool _isWaitingForAI = false;
+  bool _isLoadingUsage = true;
+  int _remainingUses = 3;
   String _aiResponse = '';
   Uint8List? _selectedImageBytes;
   String _selectedImageMimeType = 'image/jpeg';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRemainingUsage();
+  }
+
+  String _todayKey() {
+    final now = DateTime.now();
+    return '${now.year}-${now.month}-${now.day}';
+  }
+
+  Future<void> _loadRemainingUsage() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      if (mounted) setState(() => _isLoadingUsage = false);
+      return;
+    }
+    try {
+      final userDoc = await FirebaseFirestore.instance
+          .collection('Users')
+          .doc(uid)
+          .get();
+      var used = 0;
+      if (userDoc.exists && userDoc.data() != null) {
+        final data = userDoc.data()!;
+        if ((data['ocrUsageDate'] ?? '') == _todayKey()) {
+          used = (data['ocrUsageCount'] as num?)?.toInt() ?? 0;
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _remainingUses = (3 - used).clamp(0, 3).toInt();
+        _isLoadingUsage = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingUsage = false);
+    }
+  }
+
+  Future<void> _showUsageMessage(String message, {bool isError = false}) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: Icon(
+          isError ? Icons.error_outline : Icons.check_circle_outline,
+          color: isError ? Colors.red : Colors.green,
+        ),
+        title: Text(isError ? 'Không thể tiếp tục' : 'Đã giải xong'),
+        content: Text(message, textAlign: TextAlign.center),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Đã hiểu'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   void dispose() {
@@ -68,6 +131,26 @@ class _AIOcrScannerSheetState extends State<AIOcrScannerSheet> {
           : lowerName.endsWith('.webp')
           ? 'image/webp'
           : 'image/jpeg';
+
+      // Google ML Kit Text Recognition không hỗ trợ Flutter Web.
+      // Trên web dùng trực tiếp bytes ảnh và Gemini Vision để nhận diện.
+      if (kIsWeb) {
+        final recognizedForWeb = await _aiService
+            .extractQuestionFromImageToLatex(
+              imageBytes: _selectedImageBytes!,
+              imageMimeType: _selectedImageMimeType,
+            );
+        if (!mounted) return;
+        setState(() {
+          _textCtrl.text = recognizedForWeb;
+          _textCtrl.selection = TextSelection.collapsed(
+            offset: _textCtrl.text.length,
+          );
+          _isProcessingImage = false;
+        });
+        return;
+      }
+
       final inputImage = InputImage.fromFilePath(pickedFile.path);
       textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
       final RecognizedText recognizedText = await textRecognizer.processImage(
@@ -88,9 +171,26 @@ class _AIOcrScannerSheetState extends State<AIOcrScannerSheet> {
       setState(() {
         _isProcessingImage = false;
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Không thể quét ảnh: $e')));
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          icon: const Icon(Icons.image_not_supported, color: Colors.red),
+          title: const Text('Không thể quét ảnh'),
+          content: Text(
+            kIsWeb
+                ? 'Không thể gửi ảnh đến AI. Hãy kiểm tra mạng, chọn ảnh rõ hơn '
+                      'và thử lại.\n\nChi tiết: $e'
+                : 'Hãy kiểm tra quyền truy cập ảnh/camera và thử lại.\n\n'
+                      'Chi tiết: $e',
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Đóng'),
+            ),
+          ],
+        ),
+      );
     } finally {
       await textRecognizer?.close();
     }
@@ -169,8 +269,7 @@ class _AIOcrScannerSheetState extends State<AIOcrScannerSheet> {
       DocumentSnapshot userDoc = await userRef.get();
 
       // Lấy ngày hôm nay (VD: 2026-7-14)
-      DateTime now = DateTime.now();
-      String today = "${now.year}-${now.month}-${now.day}";
+      String today = _todayKey();
       int currentCount = 0;
 
       // Kiểm tra xem hôm nay đã dùng mấy lần rồi
@@ -184,16 +283,15 @@ class _AIOcrScannerSheetState extends State<AIOcrScannerSheet> {
 
       // NẾU ĐÃ DÙNG 3 LẦN -> CHẶN LẠI NGAY
       if (currentCount >= 3) {
-        setState(() => _isWaitingForAI = false);
+        setState(() {
+          _isWaitingForAI = false;
+          _remainingUses = 0;
+        });
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Bạn đã hết 3 lượt giải bài bằng AI hôm nay. Hãy quay lại vào ngày mai nhé!',
-              ),
-              backgroundColor: Colors.red,
-              duration: Duration(seconds: 3),
-            ),
+          await _showUsageMessage(
+            'Bạn đã dùng hết 3/3 lượt giải bài bằng AI hôm nay. '
+            'Lượt sử dụng sẽ được làm mới vào ngày mai.',
+            isError: true,
           );
         }
         return;
@@ -215,15 +313,11 @@ class _AIOcrScannerSheetState extends State<AIOcrScannerSheet> {
         setState(() {
           _aiResponse = response;
           _isWaitingForAI = false;
+          _remainingUses = (2 - currentCount).clamp(0, 3).toInt();
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Giải thành công! Bạn còn ${2 - currentCount} lượt hôm nay.',
-            ),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 2),
-          ),
+        await _showUsageMessage(
+          'Lời giải và đáp án đã được chuẩn hóa LaTeX. '
+          'Bạn còn $_remainingUses/3 lượt giải AI hôm nay.',
         );
       }
     } catch (e) {
@@ -425,8 +519,53 @@ class _AIOcrScannerSheetState extends State<AIOcrScannerSheet> {
                     ],
                     const SizedBox(height: 16),
 
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _remainingUses > 0
+                            ? Colors.orange.shade50
+                            : Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: _remainingUses > 0
+                              ? Colors.orange.shade200
+                              : Colors.red.shade200,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.bolt,
+                            color: _remainingUses > 0
+                                ? Colors.orange.shade800
+                                : Colors.red,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _isLoadingUsage
+                                  ? 'Đang kiểm tra lượt giải AI hôm nay...'
+                                  : 'Lượt giải AI còn lại hôm nay: '
+                                        '$_remainingUses/3 lượt',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+
                     ElevatedButton.icon(
-                      onPressed: _isWaitingForAI || _isNormalizingLatex
+                      onPressed:
+                          _isWaitingForAI ||
+                              _isNormalizingLatex ||
+                              _isLoadingUsage ||
+                              _remainingUses <= 0
                           ? null
                           : _askAITutor,
                       icon: _isWaitingForAI
@@ -442,7 +581,9 @@ class _AIOcrScannerSheetState extends State<AIOcrScannerSheet> {
                       label: Text(
                         _isWaitingForAI
                             ? 'AI đang giải bài...'
-                            : 'Nhờ AI giải ngay (Max 3 lần/ngày)',
+                            : _remainingUses <= 0
+                            ? 'Đã hết 3/3 lượt hôm nay'
+                            : 'Giải bằng AI • Còn $_remainingUses/3 lượt',
                       ),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFE65100),

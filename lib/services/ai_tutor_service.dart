@@ -201,7 +201,9 @@ $cleanText
       if (answer == null || answer.isEmpty) {
         throw StateError('AI không trả về nội dung.');
       }
-      final normalized = _normalizeAiMarkdown(answer);
+      // Chạy một lượt định dạng riêng để mọi công thức trong phần đáp án,
+      // cách giải và kiểm tra đều có delimiter LaTeX hợp lệ.
+      final normalized = await normalizeSolvedAnswerToLatex(answer: answer);
       try {
         await _saveChatHistory(
           'Nội dung OCR:\n$cleanText',
@@ -229,6 +231,85 @@ $cleanText
         .replaceAll(r'\(', r'$')
         .replaceAll(r'\)', r'$')
         .trim();
+  }
+
+  /// Chỉ sửa định dạng Markdown/LaTeX của lời giải, tuyệt đối không tính lại
+  /// hoặc thay đổi đáp án. Nếu lượt định dạng gặp lỗi, trả về bản đã làm sạch
+  /// bằng quy tắc cục bộ để người dùng vẫn nhận được lời giải.
+  Future<String> normalizeSolvedAnswerToLatex({required String answer}) async {
+    final locallyNormalized = _normalizeAiMarkdown(answer);
+    if (locallyNormalized.isEmpty) return locallyNormalized;
+
+    final prompt =
+        '''
+Bạn là bộ định dạng Markdown và LaTeX. Hãy định dạng lại TOÀN BỘ lời giải bên
+dưới mà không thay đổi bất kỳ nội dung, kết quả, phương án hay bước tính nào.
+
+QUY TẮC BẮT BUỘC:
+- Giữ nguyên đáp án và thứ tự các mục.
+- Mọi biểu thức toán, biến, phương trình, phân số, căn, logarit, số mũ và chỉ số
+  phải được chuyển thành LaTeX hợp lệ.
+- Công thức trong dòng đặt trong \$...\$; công thức riêng dòng đặt trong
+  \$\$...\$\$.
+- Dùng lệnh chuẩn như \\frac{a}{b}, \\sqrt{x}, x^{2}, a_{n}, \\log_{2}x.
+- Không đặt LaTeX trong backtick hoặc khối mã.
+- Không thêm lời mở đầu, nhận xét hay cách giải mới.
+
+<answer>
+$locallyNormalized
+</answer>
+''';
+
+    try {
+      final response = await _model
+          .generateContent([Content.text(prompt)])
+          .timeout(const Duration(seconds: 15));
+      final formatted = response.text?.trim();
+      if (formatted == null || formatted.isEmpty) return locallyNormalized;
+      return _normalizeAiMarkdown(formatted);
+    } catch (e) {
+      debugPrint('Không thể chuẩn hóa LaTeX cho lời giải: $e');
+      return locallyNormalized;
+    }
+  }
+
+  /// Luồng OCR dành cho Flutter Web. ML Kit không hỗ trợ nền tảng web nên ảnh
+  /// được gửi trực tiếp dưới dạng bytes đến mô hình đa phương thức.
+  Future<String> extractQuestionFromImageToLatex({
+    required Uint8List imageBytes,
+    String imageMimeType = 'image/jpeg',
+  }) async {
+    if (imageBytes.isEmpty) {
+      throw const FormatException('Ảnh được chọn không có dữ liệu.');
+    }
+
+    const prompt = '''
+Bạn là hệ thống OCR chuyên phục hồi câu hỏi thi Đánh giá năng lực từ ảnh.
+
+YÊU CẦU BẮT BUỘC:
+- Chép lại đầy đủ đề bài và các lựa chọn A, B, C, D theo đúng thứ tự trong ảnh.
+- Không giải bài, không đoán phần bị che hoặc mờ; ghi [không rõ] nếu không đọc được.
+- Sửa các lỗi nhận dạng ký tự hiển nhiên nhưng không thay đổi số liệu.
+- Mọi biểu thức toán phải dùng LaTeX chuẩn.
+- Công thức trong dòng đặt trong \$...\$; công thức riêng dòng đặt trong
+  \$\$...\$\$.
+- Không dùng khối mã, không viết lời mở đầu hoặc nhận xét.
+- Chỉ trả về nội dung câu hỏi đã phục hồi.
+''';
+
+    final response = await _model
+        .generateContent([
+          Content.multi([
+            TextPart(prompt),
+            DataPart(imageMimeType, imageBytes),
+          ]),
+        ])
+        .timeout(const Duration(seconds: 25));
+    final text = response.text?.trim();
+    if (text == null || text.isEmpty) {
+      throw StateError('AI không nhận diện được nội dung trong ảnh.');
+    }
+    return _normalizeAiMarkdown(text);
   }
 
   /// Dùng ảnh gốc cùng kết quả OCR để phục hồi câu hỏi và công thức LaTeX.

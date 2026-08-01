@@ -34,6 +34,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // ĐÃ THÊM: Biến này dùng để quản lý luồng lắng nghe dữ liệu
   StreamSubscription<QuerySnapshot>? _historySub;
   StreamSubscription<QuerySnapshot>? _notificationSub;
+  bool _isNotificationDialogOpen = false;
 
   @override
   void initState() {
@@ -65,7 +66,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           (snapshot) async {
             if (!mounted || snapshot.docs.isEmpty) return;
             final doc = snapshot.docs.first;
-            final data = doc.data() as Map<String, dynamic>;
+            final data = doc.data();
             final deletedBy = List<String>.from(data['deletedBy'] ?? const []);
             if (deletedBy.contains(uid)) return;
 
@@ -84,34 +85,114 @@ class _DashboardScreenState extends State<DashboardScreen> {
             if (!mounted) return;
             final title = (data['title'] ?? 'Thông báo mới').toString();
             final content = (data['content'] ?? data['body'] ?? '').toString();
-            ScaffoldMessenger.of(context)
-              ..hideCurrentSnackBar()
-              ..showSnackBar(
-                SnackBar(
-                  behavior: SnackBarBehavior.floating,
-                  duration: const Duration(seconds: 8),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      if (content.isNotEmpty) Text(content, maxLines: 2),
-                    ],
-                  ),
-                  action: SnackBarAction(
-                    label: 'Xem',
-                    onPressed: _showNotificationPopup,
-                  ),
-                ),
-              );
+            await _showForegroundNotificationDialog(
+              title: title,
+              content: content,
+              notificationRef: doc.reference,
+              uid: uid,
+            );
           },
           onError: (error) {
             debugPrint('Lỗi lắng nghe thông báo: $error');
           },
         );
+  }
+
+  Future<void> _showForegroundNotificationDialog({
+    required String title,
+    required String content,
+    required DocumentReference notificationRef,
+    required String uid,
+  }) async {
+    if (_isNotificationDialogOpen || !mounted) return;
+    _isNotificationDialogOpen = true;
+    final dialogContext = navigatorKey.currentContext ?? context;
+
+    try {
+      await showDialog<void>(
+        context: dialogContext,
+        useRootNavigator: true,
+        barrierDismissible: true,
+        builder: (popupContext) => AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 32),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          titlePadding: const EdgeInsets.fromLTRB(20, 18, 12, 0),
+          contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.notifications_active,
+                  color: Color(0xFF002045),
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Thông báo mới',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+              IconButton(
+                onPressed: () => Navigator.of(popupContext).pop(),
+                icon: const Icon(Icons.close),
+              ),
+            ],
+          ),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 360),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (content.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    content,
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(height: 1.4),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () async {
+                try {
+                  await notificationRef.update({
+                    'readBy': FieldValue.arrayUnion([uid]),
+                  });
+                } catch (e) {
+                  debugPrint('Không thể đánh dấu đã đọc: $e');
+                }
+                if (popupContext.mounted) {
+                  Navigator.of(popupContext).pop();
+                }
+              },
+              child: const Text('Đã hiểu'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _isNotificationDialogOpen = false;
+    }
   }
 
   void _showNotificationPopup() {
