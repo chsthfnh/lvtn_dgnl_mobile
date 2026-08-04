@@ -5,6 +5,29 @@ import 'package:flutter_math_fork/flutter_math.dart';
 
 import '../../../services/hive_service.dart';
 
+String _normalizeQuestionDisplayText(String text) {
+  final parts = text.split(r'$');
+  for (int i = 0; i < parts.length; i += 2) {
+    var plainText = parts[i]
+        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('\uF0CE', '∈')
+        .replaceAll('\uF02D', '−')
+        .replaceAll('\uF03D', '=')
+        .replaceAll('\uF0C6', '∅')
+        .replaceAll(r'\_', '_')
+        .replaceAll(r'\%', '%')
+        .replaceAll(r'\#', '#')
+        .replaceAll(r'\&', '&');
+    plainText = plainText.replaceAllMapped(
+      RegExp(r'<sup>\s*0\s*</sup>\s*(\d+(?:[.,]\d+)?)', caseSensitive: false),
+      (match) => '\$${match.group(1)}^{\\circ}\$',
+    );
+    parts[i] = plainText;
+  }
+  return parts.join(r'$');
+}
+
 class OfflineRealExamScreen extends StatefulWidget {
   final String examId;
   final Map<String, dynamic> examInfo;
@@ -539,6 +562,7 @@ class _OfflineRealExamScreenState extends State<OfflineRealExamScreen> {
   }
 
   Widget _buildMathText(String text, {TextStyle? style}) {
+    text = _normalizeQuestionDisplayText(text);
     if (!text.contains(r'$')) return Text(text, style: style);
     final parts = text.split(r'$');
     final spans = <InlineSpan>[];

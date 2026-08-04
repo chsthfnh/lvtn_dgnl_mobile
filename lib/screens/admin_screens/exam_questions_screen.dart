@@ -1,6 +1,29 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+String _normalizeQuestionDisplayText(String text) {
+  final parts = text.split(r'$');
+  for (int i = 0; i < parts.length; i += 2) {
+    var plainText = parts[i]
+        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('\uF0CE', '∈')
+        .replaceAll('\uF02D', '−')
+        .replaceAll('\uF03D', '=')
+        .replaceAll('\uF0C6', '∅')
+        .replaceAll(r'\_', '_')
+        .replaceAll(r'\%', '%')
+        .replaceAll(r'\#', '#')
+        .replaceAll(r'\&', '&');
+    plainText = plainText.replaceAllMapped(
+      RegExp(r'<sup>\s*0\s*</sup>\s*(\d+(?:[.,]\d+)?)', caseSensitive: false),
+      (match) => '${match.group(1)}°',
+    );
+    parts[i] = plainText;
+  }
+  return parts.join(r'$');
+}
+
 class ExamQuestionsScreen extends StatefulWidget {
   final Map<String, dynamic> examData;
   final Map<String, int> config;
@@ -489,7 +512,9 @@ class _ExamQuestionsScreenState extends State<ExamQuestionsScreen> {
           ),
         ),
         title: Text(
-          data['noiDungCauHoi'] ?? '',
+          _normalizeQuestionDisplayText(
+            (data['noiDungCauHoi'] ?? '').toString(),
+          ),
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 14),
@@ -676,7 +701,9 @@ class _QuestionSelectorDialogState extends State<QuestionSelectorDialog> {
                     return CheckboxListTile(
                       value: isSelected,
                       title: Text(
-                        data['noiDungCauHoi'] ?? '',
+                        _normalizeQuestionDisplayText(
+                          (data['noiDungCauHoi'] ?? '').toString(),
+                        ),
                         maxLines: 2,
                         style: const TextStyle(fontSize: 13),
                       ),

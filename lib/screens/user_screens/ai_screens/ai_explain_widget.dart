@@ -4,6 +4,7 @@ import 'package:flutter_markdown_latex/flutter_markdown_latex.dart';
 import 'package:markdown/markdown.dart' as md;
 import '../../../services/ai_tutor_service.dart';
 
+//Hiển thị lời giải chi tiết từng câu
 class AITutorExplainButton extends StatelessWidget {
   final String questionContent;
   final String correctAnswer;

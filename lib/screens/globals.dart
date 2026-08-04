@@ -1,6 +1,8 @@
 // File: lib/globals.dart
 import 'package:flutter/material.dart';
 
+//Ho tro Ai tutor đi khắp nơi trong app
+
 // Key để điều khiển Navigator từ bất kỳ đâu
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 

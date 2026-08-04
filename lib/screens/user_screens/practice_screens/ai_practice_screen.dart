@@ -3,6 +3,29 @@ import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'ai_practice_result_screen.dart';
 
+String _normalizeQuestionDisplayText(String text) {
+  final parts = text.split(r'$');
+  for (int i = 0; i < parts.length; i += 2) {
+    var plainText = parts[i]
+        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('\uF0CE', '∈')
+        .replaceAll('\uF02D', '−')
+        .replaceAll('\uF03D', '=')
+        .replaceAll('\uF0C6', '∅')
+        .replaceAll(r'\_', '_')
+        .replaceAll(r'\%', '%')
+        .replaceAll(r'\#', '#')
+        .replaceAll(r'\&', '&');
+    plainText = plainText.replaceAllMapped(
+      RegExp(r'<sup>\s*0\s*</sup>\s*(\d+(?:[.,]\d+)?)', caseSensitive: false),
+      (match) => '\$${match.group(1)}^{\\circ}\$',
+    );
+    parts[i] = plainText;
+  }
+  return parts.join(r'$');
+}
+
 const _primaryColor = Color(0xFF1A237E); // Đổi tông màu một chút cho khác biệt
 const _onPrimaryColor = Colors.white;
 const _surfaceColor = Color(0xFFEFF4FF);
@@ -489,6 +512,7 @@ class _AIPracticeScreenState extends State<AIPracticeScreen> {
   }
 
   Widget _buildMathText(String text, {TextStyle? style}) {
+    text = _normalizeQuestionDisplayText(text);
     if (!text.contains('\$')) return Text(text, style: style);
     return LayoutBuilder(
       builder: (context, constraints) {

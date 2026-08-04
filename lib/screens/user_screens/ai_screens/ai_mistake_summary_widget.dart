@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import '../../../services/ai_tutor_service.dart'; // Đổi đường dẫn nếu cần
 
+//Phan tich loi sai sau khi vua nop bai
 class AIMistakeSummaryButton extends StatelessWidget {
   final List<dynamic> questions;
   final Map<int, int> userAnswers;

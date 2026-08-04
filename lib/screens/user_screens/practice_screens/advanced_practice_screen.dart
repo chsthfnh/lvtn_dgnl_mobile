@@ -4,6 +4,7 @@ import 'ai_practice_screen.dart';
 import 'dart:convert';
 import 'package:google_generative_ai/google_generative_ai.dart';
 
+//Tao cau hoi smart
 class AdvancedPracticeScreen extends StatefulWidget {
   const AdvancedPracticeScreen({super.key});
 
@@ -284,8 +285,8 @@ class _AdvancedPracticeScreenState extends State<AdvancedPracticeScreen> {
 
       final templateData = querySnapshot.docs.first.data();
 
-      // 3. Khởi tạo Google Gemini 1.5 Flash (Nhanh và thông minh nhất hiện nay)
-      // TODO: Dán API Key thật của bạn vào trong cặp ngoặc nháy này
+      // 3. Khởi tạo Google gemini-3.1-flash-lite
+      // TODO: API Key
       const apiKey = 'AQ.Ab8RN6KMss2SBMtfMxJv1NZ4k_WmbQKbJyNGzINjrA2jkmhhZw';
 
       final model = GenerativeModel(

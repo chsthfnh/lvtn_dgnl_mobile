@@ -3,6 +3,71 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 
+String _normalizeQuestionDisplayText(String text) {
+  final parts = text.split(r'$');
+  for (int i = 0; i < parts.length; i += 2) {
+    var plainText = parts[i]
+        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('\uF0CE', '∈')
+        .replaceAll('\uF02D', '−')
+        .replaceAll('\uF03D', '=')
+        .replaceAll('\uF0C6', '∅')
+        .replaceAll(r'\_', '_')
+        .replaceAll(r'\%', '%')
+        .replaceAll(r'\#', '#')
+        .replaceAll(r'\&', '&');
+    plainText = plainText.replaceAllMapped(
+      RegExp(r'<sup>\s*0\s*</sup>\s*(\d+(?:[.,]\d+)?)', caseSensitive: false),
+      (match) => '\$${match.group(1)}^{\\circ}\$',
+    );
+    parts[i] = plainText;
+  }
+  return parts.join(r'$');
+}
+
+Future<String> _resolveQuestionImageUrl(String imageValue) async {
+  final value = imageValue.trim();
+  if (value.startsWith('http://') || value.startsWith('https://')) return value;
+  if (value.startsWith('gs://')) {
+    return FirebaseStorage.instance.refFromURL(value).getDownloadURL();
+  }
+
+  final rawName = value.startsWith('QuestionImages/')
+      ? value.substring('QuestionImages/'.length)
+      : value;
+  final candidateNames = <String>{rawName};
+  final hasImageExtension = RegExp(
+    r'\.(png|jpe?g|webp|gif)$',
+    caseSensitive: false,
+  ).hasMatch(rawName);
+
+  if (!hasImageExtension) {
+    candidateNames.addAll(['$rawName.png', '$rawName.jpg', '$rawName.jpeg']);
+    final underscoreName = rawName.replaceAllMapped(
+      RegExp(r'(\d)\.(\d)'),
+      (match) => '${match.group(1)}_${match.group(2)}',
+    );
+    final dashName = rawName.replaceAllMapped(
+      RegExp(r'(\d)\.(\d)'),
+      (match) => '${match.group(1)}-${match.group(2)}',
+    );
+    candidateNames.addAll(['$underscoreName.png', '$dashName.png']);
+  }
+
+  Object? lastError;
+  for (final candidate in candidateNames) {
+    try {
+      return await FirebaseStorage.instance
+          .ref('QuestionImages/$candidate')
+          .getDownloadURL();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError ?? StateError('Tên ảnh không hợp lệ: $imageValue');
+}
+
 class QuestionBankScreen extends StatefulWidget {
   const QuestionBankScreen({super.key});
 
@@ -41,15 +106,143 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
     });
   }
 
-  Future<void> _executeBatchDelete(List<String> docIdsToProcess) async {
+  List<String> _getExamIds(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>? ?? {};
+    final value = data['maDeThi'];
+
+    if (value is Iterable) {
+      return value
+          .map((item) => item.toString().trim())
+          .where((item) => item.isNotEmpty)
+          .toList();
+    }
+
+    final examId = value?.toString().trim() ?? '';
+    return examId.isEmpty ? const [] : [examId];
+  }
+
+  String _getExamCode(DocumentSnapshot doc) {
+    return _getExamIds(doc).join(', ');
+  }
+
+  List<DocumentSnapshot> _getQuestionsLinkedToExam(
+    Iterable<DocumentSnapshot> docs,
+  ) {
+    return docs.where((doc) => _getExamCode(doc).isNotEmpty).toList();
+  }
+
+  Future<List<DocumentSnapshot>> _loadQuestionDocsByIds(
+    Iterable<String> docIds,
+  ) async {
+    final ids = docIds.toList();
+    final result = <DocumentSnapshot>[];
+
+    // Firestore giới hạn số phần tử của whereIn, nên chia nhỏ để hỗ trợ
+    // trường hợp quản trị viên chọn nhiều câu hỏi cùng lúc.
+    const chunkSize = 10;
+    for (int i = 0; i < ids.length; i += chunkSize) {
+      final chunk = ids.skip(i).take(chunkSize).toList();
+      final snapshot = await FirebaseFirestore.instance
+          .collection('Questions')
+          .where(FieldPath.documentId, whereIn: chunk)
+          .get();
+      result.addAll(snapshot.docs);
+    }
+
+    return result;
+  }
+
+  Future<List<String>> _loadExamNames(Iterable<String> examIds) async {
+    final ids = examIds.where((id) => id.isNotEmpty).toSet().toList();
+    if (ids.isEmpty) return const [];
+
+    final namesById = <String, String>{};
+
+    try {
+      // Firestore không tự JOIN Questions với Exams. Tải danh sách đề rồi tự
+      // đối chiếu maDeThi với cả document ID và trường maDe. Việc chuyển tất
+      // cả về String giúp dữ liệu "3" và số 3 vẫn khớp nhau.
+      final examsSnapshot = await FirebaseFirestore.instance
+          .collection('Exams')
+          .get();
+
+      for (final doc in examsSnapshot.docs) {
+        final data = doc.data();
+        final examName = (data['tenDeThi'] ?? data['title'])?.toString().trim();
+        if (examName == null || examName.isEmpty) continue;
+
+        namesById[doc.id.trim()] = examName;
+
+        final examCode = data['maDe']?.toString().trim() ?? '';
+        if (examCode.isNotEmpty) {
+          namesById[examCode] = examName;
+        }
+
+        final examId = data['examId']?.toString().trim() ?? '';
+        if (examId.isNotEmpty) {
+          namesById[examId] = examName;
+        }
+      }
+    } catch (_) {
+      // Nếu không tải được Exams, vẫn giữ nguyên việc chặn xóa và dùng mã
+      // làm thông tin dự phòng thay vì cho phép xóa nhầm câu hỏi.
+    }
+
+    return ids.map((id) => namesById[id] ?? 'Đề thi $id').toSet().toList();
+  }
+
+  Future<void> _showCannotDeleteDialog(
+    List<DocumentSnapshot> linkedDocs,
+  ) async {
+    final examIds = linkedDocs.expand(_getExamIds).toSet();
+    final examNames = await _loadExamNames(examIds);
+    if (!mounted) return;
+    final displayedExamNames = examNames.join(', ');
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.lock_outline, color: Colors.orange),
+            SizedBox(width: 10),
+            Expanded(child: Text('Không thể xóa câu hỏi')),
+          ],
+        ),
+        content: Text(
+          linkedDocs.length == 1
+              ? 'Câu hỏi này đang được sử dụng trong đề thi: '
+                    '$displayedExamNames. '
+                    'Hãy gỡ câu hỏi khỏi đề thi trước khi xóa.'
+              : 'Có ${linkedDocs.length} câu hỏi đang được sử dụng trong các '
+                    'đề thi: $displayedExamNames. Hãy gỡ các câu hỏi khỏi đề '
+                    'thi trước khi xóa.',
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Đã hiểu'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool> _canDeleteQuestions(List<DocumentSnapshot> docs) async {
+    final linkedDocs = _getQuestionsLinkedToExam(docs);
+    if (linkedDocs.isEmpty) return true;
+
+    await _showCannotDeleteDialog(linkedDocs);
+    return false;
+  }
+
+  Future<void> _executeBatchDelete(List<DocumentSnapshot> docsToProcess) async {
     int chunkSize = 400;
-    for (int i = 0; i < docIdsToProcess.length; i += chunkSize) {
+    for (int i = 0; i < docsToProcess.length; i += chunkSize) {
       WriteBatch batch = FirebaseFirestore.instance.batch();
-      var chunk = docIdsToProcess.skip(i).take(chunkSize);
-      for (var id in chunk) {
-        batch.delete(
-          FirebaseFirestore.instance.collection('Questions').doc(id),
-        );
+      var chunk = docsToProcess.skip(i).take(chunkSize);
+      for (var doc in chunk) {
+        batch.delete(doc.reference);
       }
       await batch.commit();
     }
@@ -58,17 +251,20 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
   Future<void> _deleteSelectedItems() async {
     if (_selectedDocIds.isEmpty) return;
 
-    bool confirm = await _showConfirmDialog(
-      'Xóa nhiều câu hỏi',
-      'Bạn có chắc chắn muốn xóa ${_selectedDocIds.length} câu hỏi đã đánh dấu?',
-    );
+    try {
+      final selectedDocs = await _loadQuestionDocsByIds(_selectedDocIds);
+      if (!mounted || !await _canDeleteQuestions(selectedDocs)) return;
 
-    if (confirm) {
-      _showLoadingSnackBar(
-        'Đang tiến hành xóa ${_selectedDocIds.length} câu hỏi...',
+      bool confirm = await _showConfirmDialog(
+        'Xóa nhiều câu hỏi',
+        'Bạn có chắc chắn muốn xóa ${_selectedDocIds.length} câu hỏi đã đánh dấu?',
       );
-      try {
-        await _executeBatchDelete(_selectedDocIds.toList());
+
+      if (confirm) {
+        _showLoadingSnackBar(
+          'Đang tiến hành xóa ${_selectedDocIds.length} câu hỏi...',
+        );
+        await _executeBatchDelete(selectedDocs);
         if (mounted) {
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
           ScaffoldMessenger.of(
@@ -79,11 +275,13 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
             _selectedDocIds.clear();
           });
         }
-      } catch (e) {
-        if (mounted)
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Lỗi: $e')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Lỗi kiểm tra câu hỏi: $e')));
       }
     }
   }
@@ -162,6 +360,8 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
   Future<void> _deleteAllFiltered(List<DocumentSnapshot> filteredDocs) async {
     if (filteredDocs.isEmpty) return;
 
+    if (!await _canDeleteQuestions(filteredDocs)) return;
+
     String warningFilter = 'TOÀN BỘ ${filteredDocs.length} câu hỏi';
     if (_selectedPhanThi != 'Tất cả')
       warningFilter += ' thuộc $_selectedPhanThi';
@@ -179,8 +379,7 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
         'Đang xóa $warningFilter. Vui lòng không đóng ứng dụng...',
       );
       try {
-        List<String> idsToDelete = filteredDocs.map((doc) => doc.id).toList();
-        await _executeBatchDelete(idsToDelete);
+        await _executeBatchDelete(filteredDocs);
 
         if (mounted) {
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -204,6 +403,8 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
   }
 
   Future<void> _deleteSingleOrGroup(List<DocumentSnapshot> docs) async {
+    if (!await _canDeleteQuestions(docs)) return;
+
     String title = docs.length == 1 ? 'Xóa câu hỏi' : 'Xóa cụm câu hỏi';
     String content = docs.length == 1
         ? 'Bạn có chắc chắn muốn xóa câu hỏi này?'
@@ -212,7 +413,7 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
     bool confirm = await _showConfirmDialog(title, content);
     if (confirm) {
       try {
-        await _executeBatchDelete(docs.map((d) => d.id).toList());
+        await _executeBatchDelete(docs);
         if (mounted)
           ScaffoldMessenger.of(
             context,
@@ -501,6 +702,7 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
   // HÀM VẼ TOÁN HỌC - TỰ ĐỘNG SỬA LỖI GẠCH NGANG & BÁO LỖI ĐỎ KHI SAI CÚ PHÁP
   // =========================================================================
   Widget _buildMathText(String text, {TextStyle? style}) {
+    text = _normalizeQuestionDisplayText(text);
     if (!text.contains('\$')) {
       return Text(text, style: style);
     }
@@ -1218,9 +1420,7 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
 
   Widget _buildImageFromStorage(String imageName) {
     return FutureBuilder<String>(
-      future: FirebaseStorage.instance
-          .ref('QuestionImages/$imageName')
-          .getDownloadURL(),
+      future: _resolveQuestionImageUrl(imageName),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting)
           return const Padding(
@@ -1327,16 +1527,30 @@ class _QuestionFormScreenState extends State<QuestionFormScreen> {
       Map<String, dynamic> data =
           widget.questionDoc!.data() as Map<String, dynamic>;
       _maNhomCtrl.text = data['maNhom'] ?? '';
-      _noiDungChungCtrl.text = data['noiDungChung'] ?? '';
+      _noiDungChungCtrl.text = _normalizeQuestionDisplayText(
+        (data['noiDungChung'] ?? '').toString(),
+      );
       _anhChungCtrl.text = data['anhChung'] ?? '';
-      _noiDungCauHoiCtrl.text = data['noiDungCauHoi'] ?? '';
+      _noiDungCauHoiCtrl.text = _normalizeQuestionDisplayText(
+        (data['noiDungCauHoi'] ?? '').toString(),
+      );
       _anhCauHoiCtrl.text = data['anhCauHoi'] ?? '';
       List<dynamic> options = data['options'] ?? ['', '', '', ''];
-      if (options.isNotEmpty) _ansACtrl.text = options[0].toString();
-      if (options.length > 1) _ansBCtrl.text = options[1].toString();
-      if (options.length > 2) _ansCCtrl.text = options[2].toString();
-      if (options.length > 3) _ansDCtrl.text = options[3].toString();
-      _loiGiaiCtrl.text = data['loiGiai'] ?? '';
+      if (options.isNotEmpty) {
+        _ansACtrl.text = _normalizeQuestionDisplayText(options[0].toString());
+      }
+      if (options.length > 1) {
+        _ansBCtrl.text = _normalizeQuestionDisplayText(options[1].toString());
+      }
+      if (options.length > 2) {
+        _ansCCtrl.text = _normalizeQuestionDisplayText(options[2].toString());
+      }
+      if (options.length > 3) {
+        _ansDCtrl.text = _normalizeQuestionDisplayText(options[3].toString());
+      }
+      _loiGiaiCtrl.text = _normalizeQuestionDisplayText(
+        (data['loiGiai'] ?? '').toString(),
+      );
       _phanThiCtrl.text = data['phanThi'] ?? '';
       _chuDeCtrl.text = data['chuDe'] ?? '';
       String ans = data['correctAnswer'] ?? 'A';
@@ -1369,18 +1583,22 @@ class _QuestionFormScreenState extends State<QuestionFormScreen> {
 
     Map<String, dynamic> questionData = {
       'maNhom': _maNhomCtrl.text.trim(),
-      'noiDungChung': _noiDungChungCtrl.text.trim(),
+      'noiDungChung': _normalizeQuestionDisplayText(
+        _noiDungChungCtrl.text.trim(),
+      ),
       'anhChung': _anhChungCtrl.text.trim(),
-      'noiDungCauHoi': _noiDungCauHoiCtrl.text.trim(),
+      'noiDungCauHoi': _normalizeQuestionDisplayText(
+        _noiDungCauHoiCtrl.text.trim(),
+      ),
       'anhCauHoi': _anhCauHoiCtrl.text.trim(),
       'options': [
-        _ansACtrl.text.trim(),
-        _ansBCtrl.text.trim(),
-        _ansCCtrl.text.trim(),
-        _ansDCtrl.text.trim(),
+        _normalizeQuestionDisplayText(_ansACtrl.text.trim()),
+        _normalizeQuestionDisplayText(_ansBCtrl.text.trim()),
+        _normalizeQuestionDisplayText(_ansCCtrl.text.trim()),
+        _normalizeQuestionDisplayText(_ansDCtrl.text.trim()),
       ],
       'correctAnswer': _correctAnswer,
-      'loiGiai': _loiGiaiCtrl.text.trim(),
+      'loiGiai': _normalizeQuestionDisplayText(_loiGiaiCtrl.text.trim()),
       'phanThi': _phanThiCtrl.text.trim(),
       'chuDe': _chuDeCtrl.text.trim(),
       'doKho': _doKho,

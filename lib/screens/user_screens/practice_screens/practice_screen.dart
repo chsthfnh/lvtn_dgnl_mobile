@@ -8,6 +8,29 @@ import 'practice_result_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'level_config.dart';
 
+String _normalizeQuestionDisplayText(String text) {
+  final parts = text.split(r'$');
+  for (int i = 0; i < parts.length; i += 2) {
+    var plainText = parts[i]
+        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('\uF0CE', '∈')
+        .replaceAll('\uF02D', '−')
+        .replaceAll('\uF03D', '=')
+        .replaceAll('\uF0C6', '∅')
+        .replaceAll(r'\_', '_')
+        .replaceAll(r'\%', '%')
+        .replaceAll(r'\#', '#')
+        .replaceAll(r'\&', '&');
+    plainText = plainText.replaceAllMapped(
+      RegExp(r'<sup>\s*0\s*</sup>\s*(\d+(?:[.,]\d+)?)', caseSensitive: false),
+      (match) => '\$${match.group(1)}^{\\circ}\$',
+    );
+    parts[i] = plainText;
+  }
+  return parts.join(r'$');
+}
+
 const _primaryColor = Color(0xFF002045);
 const _onPrimaryColor = Colors.white;
 const _surfaceColor = Color(0xFFEFF4FF);
@@ -64,21 +87,50 @@ class _PracticeScreenState extends State<PracticeScreen> {
     unawaited(_precacheQuestionImages(index));
   }
 
-  Future<String> _resolveImageUrl(String imageValue) {
+  Future<String> _resolveImageUrl(String imageValue) async {
     final value = imageValue.trim();
 
     if (value.startsWith('http://') || value.startsWith('https://')) {
-      return Future<String>.value(value);
+      return value;
     }
 
     if (value.startsWith('gs://')) {
       return FirebaseStorage.instance.refFromURL(value).getDownloadURL();
     }
 
-    final storagePath = value.startsWith('QuestionImages/')
-        ? value
-        : 'QuestionImages/$value';
-    return FirebaseStorage.instance.ref(storagePath).getDownloadURL();
+    final rawName = value.startsWith('QuestionImages/')
+        ? value.substring('QuestionImages/'.length)
+        : value;
+    final candidateNames = <String>{rawName};
+    final hasImageExtension = RegExp(
+      r'\.(png|jpe?g|webp|gif)$',
+      caseSensitive: false,
+    ).hasMatch(rawName);
+
+    if (!hasImageExtension) {
+      candidateNames.addAll(['$rawName.png', '$rawName.jpg', '$rawName.jpeg']);
+      final underscoreName = rawName.replaceAllMapped(
+        RegExp(r'(\d)\.(\d)'),
+        (match) => '${match.group(1)}_${match.group(2)}',
+      );
+      final dashName = rawName.replaceAllMapped(
+        RegExp(r'(\d)\.(\d)'),
+        (match) => '${match.group(1)}-${match.group(2)}',
+      );
+      candidateNames.addAll(['$underscoreName.png', '$dashName.png']);
+    }
+
+    Object? lastError;
+    for (final candidate in candidateNames) {
+      try {
+        return await FirebaseStorage.instance
+            .ref('QuestionImages/$candidate')
+            .getDownloadURL();
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError ?? StateError('Tên ảnh không hợp lệ: $imageValue');
   }
 
   Future<String> _getImageUrl(String imageValue) {
@@ -718,6 +770,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
   }
 
   Widget _buildMathText(String text, {TextStyle? style}) {
+    text = _normalizeQuestionDisplayText(text);
     if (!text.contains('\$')) return Text(text, style: style);
     return LayoutBuilder(
       builder: (context, constraints) {

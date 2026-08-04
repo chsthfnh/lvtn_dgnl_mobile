@@ -25,13 +25,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
   String _fullName = 'Học viên';
 
-  // Biến lưu trữ tiến độ thực tế
+  //Biến lưu trữ tiến độ thực tế
   double _overallProgress = 0.0;
   double _ngonNguProgress = 0.0;
   double _toanHocProgress = 0.0;
   double _logicProgress = 0.0;
 
-  // ĐÃ THÊM: Biến này dùng để quản lý luồng lắng nghe dữ liệu
+  // Biến dùng để quản lý luồng lắng nghe dữ liệu
   StreamSubscription<QuerySnapshot>? _historySub;
   StreamSubscription<QuerySnapshot>? _notificationSub;
   bool _isNotificationDialogOpen = false;
@@ -40,14 +40,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void initState() {
     super.initState();
     _fetchUserData();
-    _listenToRealProgress(); // ĐÃ SỬA: Gọi hàm lắng nghe Real-time
+    _listenToRealProgress(); //Gọi hàm lắng nghe Real-time
     _listenForForegroundNotifications();
     updatePresence('idle');
   }
 
   @override
   void dispose() {
-    // ĐÃ THÊM: Hủy lắng nghe khi đóng màn hình để giải phóng RAM
+    //Hủy lắng nghe khi đóng màn hình để giải phóng RAM
     _historySub?.cancel();
     _notificationSub?.cancel();
     super.dispose();
@@ -723,7 +723,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 16),
 
           // ==========================================
-          // ĐÃ THÊM: NÚT LUYỆN TẬP NÂNG CAO AI (NẰM NGANG)
+          //NÚT LUYỆN TẬP NÂNG CAO AI
           // ==========================================
           GestureDetector(
             onTap: () {
@@ -1133,11 +1133,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // --- KHÔI PHỤC GIAO DIỆN THẺ ĐỀ THI ĐẸP ---
+  // ---  GIAO DIỆN THẺ ĐỀ THI  ---
   Widget _buildExamStream() {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
-          .collection('Exams') // SỬA: Đã trả về đúng bảng Exams
+          .collection('Exams') // Trả về đúng bảng Exams
           .orderBy('createdAt', descending: true)
           .snapshots(),
       builder: (context, snapshot) {
