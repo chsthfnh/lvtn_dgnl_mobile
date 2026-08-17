@@ -26,6 +26,37 @@ String _normalizeQuestionDisplayText(String text) {
   return parts.join(r'$');
 }
 
+String _normalizeDifficultyValue(dynamic value) {
+  final raw = value?.toString().trim().toLowerCase() ?? '';
+  if (raw.isEmpty) return '';
+
+  if (raw == '1' ||
+      raw == '1.0' ||
+      raw == 'easy' ||
+      raw == 'de' ||
+      raw.contains('dễ')) {
+    return 'Dễ';
+  }
+
+  if (raw == '2' ||
+      raw == '2.0' ||
+      raw == 'medium' ||
+      raw == 'tb' ||
+      raw.contains('trung')) {
+    return 'Trung bình';
+  }
+
+  if (raw == '3' ||
+      raw == '3.0' ||
+      raw == 'hard' ||
+      raw == 'kho' ||
+      raw.contains('khó')) {
+    return 'Khó';
+  }
+
+  return value.toString().trim();
+}
+
 Future<String> _resolveQuestionImageUrl(String imageValue) async {
   final value = imageValue.trim();
   if (value.startsWith('http://') || value.startsWith('https://')) return value;
@@ -83,7 +114,11 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
   String _searchText = '';
   String _selectedPhanThi = 'Tất cả';
   String _selectedChuDe = 'Tất cả';
-  String _selectedDoKho = 'Tất cả'; // MỚI: Biến lưu trữ độ khó đang lọc
+  String _selectedDoKho = 'Tất cả';
+  String _selectedMaDeThi = 'Tất cả';
+
+  static const String _allExamFilter = 'Tất cả';
+  static const String _withoutExamFilter = 'Chưa có mã đề';
 
   // --- BIẾN CHỨC NĂNG CHỌN NHIỀU ---
   bool _isSelectionMode = false;
@@ -96,7 +131,6 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
     'Tư duy khoa học': ['Tất cả', 'Logic', 'Suy luận'],
   };
 
-  // MỚI: Danh sách các mức độ khó để hiển thị ở Dropdown
   final List<String> _doKhoList = ['Tất cả', 'Dễ', 'Trung bình', 'Khó'];
 
   void _onFilterChanged() {
@@ -106,8 +140,7 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
     });
   }
 
-  List<String> _getExamIds(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>? ?? {};
+  List<String> _getExamIdsFromData(Map<String, dynamic> data) {
     final value = data['maDeThi'];
 
     if (value is Iterable) {
@@ -117,8 +150,39 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
           .toList();
     }
 
+    if (value is String && (value.contains(',') || value.contains(';'))) {
+      return value
+          .split(RegExp(r'[,;]'))
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toList();
+    }
+
     final examId = value?.toString().trim() ?? '';
     return examId.isEmpty ? const [] : [examId];
+  }
+
+  List<String> _getExamIds(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>? ?? {};
+    return _getExamIdsFromData(data);
+  }
+
+  List<String> _buildExamFilterItems(Iterable<DocumentSnapshot> docs) {
+    final examIds = docs.expand(_getExamIds).toSet().toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
+    final items = <String>[
+      _allExamFilter,
+      _withoutExamFilter,
+      ...examIds,
+    ];
+
+    // Giữ giá trị hiện tại trong danh sách để Dropdown không báo lỗi nếu đề
+    // vừa bị đổi mã hoặc xóa trong lúc màn hình đang mở.
+    if (!items.contains(_selectedMaDeThi)) {
+      items.add(_selectedMaDeThi);
+    }
+    return items;
   }
 
   String _getExamCode(DocumentSnapshot doc) {
@@ -368,6 +432,11 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
     if (_selectedChuDe != 'Tất cả') warningFilter += ' - $_selectedChuDe';
     if (_selectedDoKho != 'Tất cả')
       warningFilter += ' (Độ khó: $_selectedDoKho)';
+    if (_selectedMaDeThi == _withoutExamFilter) {
+      warningFilter += ' chưa có mã đề';
+    } else if (_selectedMaDeThi != _allExamFilter) {
+      warningFilter += ' thuộc mã đề $_selectedMaDeThi';
+    }
 
     bool confirm = await _showConfirmDialog(
       'CẢNH BÁO: XÓA TOÀN BỘ MỤC NÀY',
@@ -495,6 +564,9 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
           .snapshots(),
       builder: (context, snapshot) {
         List<DocumentSnapshot> filteredDocs = [];
+        final examFilterItems = _buildExamFilterItems(
+          snapshot.hasData ? snapshot.data!.docs : const <DocumentSnapshot>[],
+        );
 
         if (snapshot.hasData) {
           filteredDocs = snapshot.data!.docs.where((doc) {
@@ -505,7 +577,8 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
             String cDe = data['chuDe']?.toString() ?? '';
             String nDungChung =
                 data['noiDungChung']?.toString().toLowerCase() ?? '';
-            String dKho = data['doKho']?.toString() ?? ''; // MỚI: Đọc độ khó
+            final dKho = _normalizeDifficultyValue(data['doKho']);
+            final examIds = _getExamIdsFromData(data);
 
             if (_searchText.isNotEmpty &&
                 !qText.contains(_searchText.toLowerCase()) &&
@@ -518,9 +591,18 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
                 !cDe.toLowerCase().contains(_selectedChuDe.toLowerCase()))
               return false;
 
-            // MỚI: Lọc theo độ khó
-            if (_selectedDoKho != 'Tất cả' && dKho != _selectedDoKho)
+            if (_selectedDoKho != 'Tất cả' && dKho != _selectedDoKho) {
               return false;
+            }
+
+            if (_selectedMaDeThi == _withoutExamFilter && examIds.isNotEmpty) {
+              return false;
+            }
+            if (_selectedMaDeThi != _allExamFilter &&
+                _selectedMaDeThi != _withoutExamFilter &&
+                !examIds.contains(_selectedMaDeThi)) {
+              return false;
+            }
 
             return true;
           }).toList();
@@ -648,7 +730,6 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
                       ],
                     ),
                     const SizedBox(height: 12),
-                    // MỚI: Thêm hàng lọc theo Độ Khó
                     Row(
                       children: [
                         const Text(
@@ -665,6 +746,29 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
                             items: _doKhoList,
                             onChanged: (v) {
                               _selectedDoKho = v!;
+                              _onFilterChanged();
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        const Text(
+                          'Mã đề:',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _buildDropdown(
+                            value: _selectedMaDeThi,
+                            items: examFilterItems,
+                            onChanged: (v) {
+                              _selectedMaDeThi = v!;
                               _onFilterChanged();
                             },
                           ),
@@ -913,6 +1017,7 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
         child: DropdownButton<String>(
           value: value,
           isExpanded: true,
+          menuMaxHeight: 360,
           icon: const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
           style: const TextStyle(color: Colors.black87, fontSize: 14),
           onChanged: onChanged,
@@ -935,6 +1040,8 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
     String chuDe = firstData['chuDe'] ?? '';
     String noiDungChung = firstData['noiDungChung'] ?? '';
     String anhChung = firstData['anhChung'] ?? '';
+    final groupExamCodes = docs.expand(_getExamIds).toSet().toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
     bool isGroupSelected = docs.every((d) => _selectedDocIds.contains(d.id));
 
@@ -1051,6 +1158,13 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
                         Colors.purple.shade100,
                         Colors.purple.shade800,
                       ),
+                    _buildTag(
+                      groupExamCodes.isEmpty
+                          ? _withoutExamFilter
+                          : 'Mã đề: ${groupExamCodes.join(', ')}',
+                      Colors.teal.shade50,
+                      Colors.teal.shade800,
+                    ),
                   ],
                 ),
               ],
@@ -1104,7 +1218,8 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
 
   Widget _buildSubQuestionItem(DocumentSnapshot doc, int displayIndex) {
     Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-    String doKho = data['doKho'] ?? 'N/A';
+    String doKho = _normalizeDifficultyValue(data['doKho']);
+    if (doKho.isEmpty) doKho = 'N/A';
     String questionText = data['noiDungCauHoi'] ?? '';
     String anhCauHoi = data['anhCauHoi'] ?? '';
     String correctAnswer = data['correctAnswer'] ?? '';
@@ -1239,7 +1354,9 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
     Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
     String phanThi = data['phanThi'] ?? 'Chưa phân loại';
     String chuDe = data['chuDe'] ?? '';
-    String doKho = data['doKho'] ?? 'N/A';
+    String doKho = _normalizeDifficultyValue(data['doKho']);
+    if (doKho.isEmpty) doKho = 'N/A';
+    final examCode = _getExamCode(doc);
     String questionText = data['noiDungCauHoi'] ?? '';
     String anhCauHoi = data['anhCauHoi'] ?? '';
     String correctAnswer = data['correctAnswer'] ?? '';
@@ -1304,6 +1421,13 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
                         Colors.purple.shade100,
                         Colors.purple.shade800,
                       ),
+                    _buildTag(
+                      examCode.isEmpty
+                          ? _withoutExamFilter
+                          : 'Mã đề: $examCode',
+                      Colors.teal.shade50,
+                      Colors.teal.shade800,
+                    ),
                   ],
                 ),
               ),
@@ -1485,8 +1609,9 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
   }
 
   Color _getDifficultyColor(String difficulty) {
-    if (difficulty.toLowerCase().contains('dễ')) return Colors.green.shade500;
-    if (difficulty.toLowerCase().contains('khó')) return Colors.red.shade500;
+    final normalized = _normalizeDifficultyValue(difficulty);
+    if (normalized == 'Dễ') return Colors.green.shade500;
+    if (normalized == 'Khó') return Colors.red.shade500;
     return Colors.orange.shade500;
   }
 }
@@ -1555,7 +1680,7 @@ class _QuestionFormScreenState extends State<QuestionFormScreen> {
       _chuDeCtrl.text = data['chuDe'] ?? '';
       String ans = data['correctAnswer'] ?? 'A';
       if (['A', 'B', 'C', 'D'].contains(ans)) _correctAnswer = ans;
-      String dk = data['doKho'] ?? 'Trung bình';
+      final dk = _normalizeDifficultyValue(data['doKho']);
       if (['Dễ', 'Trung bình', 'Khó'].contains(dk)) _doKho = dk;
     }
   }
